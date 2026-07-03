@@ -54,7 +54,7 @@ test "child logger inherits name when not overridden":
 
 test "middleware can enrich records":
   clearMiddleware()
-  addMiddleware proc(record: var LogRecord): bool =
+  use proc(record: var LogRecord): bool =
     if record.extra.isNil:
       record.extra = newJObject()
     record.extra["env"] = %"test"
@@ -65,7 +65,7 @@ test "middleware can enrich records":
 
 test "middleware can suppress records":
   clearMiddleware()
-  addMiddleware proc(record: var LogRecord): bool =
+  use proc(record: var LogRecord): bool =
     record.level != "DEBUG"
   var logger = newLogger(name = "test")
   logger.info("should appear")
@@ -74,10 +74,10 @@ test "middleware can suppress records":
 
 test "middleware chain runs in order":
   clearMiddleware()
-  addMiddleware proc(record: var LogRecord): bool =
+  use proc(record: var LogRecord): bool =
     record.message &= " [first]"
     true
-  addMiddleware proc(record: var LogRecord): bool =
+  use proc(record: var LogRecord): bool =
     record.message &= " [second]"
     true
   var logger = newLogger(name = "test")

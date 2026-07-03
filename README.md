@@ -122,14 +122,14 @@ Middleware functions receive a mutable `LogRecord` and return `true` to continue
 
 ```nim
 # Enrich every log line
-addMiddleware proc(record: var LogRecord): bool =
+use proc(record: var LogRecord): bool =
   if record.extra.isNil:
     record.extra = newJObject()
   record.extra["env"] = %"production"
   true
 
 # Suppress debug logs at runtime
-addMiddleware proc(record: var LogRecord): bool =
+use proc(record: var LogRecord): bool =
   record.level != "DEBUG"
 
 # Clear all middleware
@@ -250,7 +250,7 @@ outputs = @[
 ]
 
 # Add request context via middleware
-addMiddleware proc(record: var LogRecord): bool =
+use proc(record: var LogRecord): bool =
   if record.extra.isNil:
     record.extra = newJObject()
   record.extra["env"] = %"production"

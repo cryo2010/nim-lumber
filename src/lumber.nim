@@ -27,7 +27,7 @@ type
 var middleware*: seq[LogMiddleware] = @[]
 var outputs*: seq[Stream] = @[Stream(newFileStream(stdout))]
 
-proc addMiddleware*(mw: LogMiddleware) =
+proc use*(mw: LogMiddleware) =
   middleware.add(mw)
 
 proc clearMiddleware*() =
