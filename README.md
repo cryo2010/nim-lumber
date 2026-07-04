@@ -274,6 +274,33 @@ Output(stream: newDailyFileStream("app.log"))
 Output(stream: newDailyFileStream("app.log", maxFiles = 7))
 ```
 
+### Buffered Streams
+
+Wrap any stream with `newBufferedStream` for high-throughput logging. Uses a hybrid flush strategy inspired by Go's zap logger:
+
+- **Flush on buffer full** — when accumulated data exceeds `maxSize` (default: 4096 bytes)
+- **Flush on timer** — when `flushIntervalMs` has elapsed since last flush (default: 1000ms)
+- **Flush on level** — immediately on ERROR or FATAL (configurable via `flushLevel`)
+- **Flush on close** — always flushes remaining data
+
+```nim
+# Default settings (4KB buffer, flush every 1s or on ERROR+)
+outputs = @[Output(stream: newBufferedStream(newFileStream(stdout)))]
+
+# Custom: 8KB buffer, flush every 500ms, immediate flush on WARN+
+outputs = @[Output(stream: newBufferedStream(
+  newFileStream("app.log", fmAppend),
+  maxSize = 8192,
+  flushIntervalMs = 500,
+  flushLevel = LogLevel.WARN
+))]
+
+# Combine with rotating files
+outputs = @[Output(stream: newBufferedStream(newRollingFileStream("app.log")))]
+```
+
+In benchmarks, buffered streams are ~1.5-2.3x faster than unbuffered, with the gap widening with more outputs.
+
 ### Async Streams
 
 Wrap any stream with `newAsyncStream` for non-blocking I/O. Log calls push data onto a channel and return immediately; a background thread handles the writes.

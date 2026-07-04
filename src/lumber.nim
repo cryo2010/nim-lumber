@@ -32,12 +32,26 @@ type
 
 var middleware*: seq[LogMiddleware] = @[]
 var outputs*: seq[Output] = @[Output(stream: newFileStream(stdout))]
+var logContext* {.threadvar.}: JsonNode
 
 proc use*(mw: LogMiddleware) =
   middleware.add(mw)
 
 proc clearMiddleware*() =
   middleware.setLen(0)
+
+template withLogContext*(fields: JsonNode, body: untyped) =
+  let prev = logContext
+  if prev.isNil:
+    logContext = fields
+  else:
+    logContext = prev.copy()
+    for key, val in fields:
+      logContext[key] = val
+  try:
+    body
+  finally:
+    logContext = prev
 
 # -- Rotating file streams --
 
@@ -163,6 +177,62 @@ proc newDailyFileStream*(path: string, maxFiles: int = 30): TimeRotateStream =
   result.writeDataImpl = timeRotateWrite
   result.flushImpl = timeRotateFlush
 
+# -- Buffered stream wrapper (hybrid flush strategy) --
+
+type
+  BufferedStream* = ref object of Stream
+    inner: Stream
+    buf: string
+    maxSize*: int
+    flushLevel*: LogLevel
+    flushIntervalMs*: int
+    lastFlushTime: float
+
+const defaultBufferSize* = 4096
+const defaultFlushIntervalMs* = 1000
+
+proc bufFlush(s: Stream) {.nimcall.} =
+  {.cast(raises: []).}: {.cast(tags: []).}:
+    let bs = BufferedStream(s)
+    if bs.buf.len > 0:
+      bs.inner.write(bs.buf)
+      bs.buf.setLen(0)
+    bs.inner.flush()
+    bs.lastFlushTime = epochTime()
+
+proc bufWrite(s: Stream, buffer: pointer, bufLen: int) {.nimcall.} =
+  {.cast(raises: []).}: {.cast(tags: []).}:
+    let bs = BufferedStream(s)
+    let oldLen = bs.buf.len
+    bs.buf.setLen(oldLen + bufLen)
+    copyMem(addr bs.buf[oldLen], buffer, bufLen)
+    if bs.buf.len >= bs.maxSize:
+      bufFlush(s)
+    elif bs.flushIntervalMs > 0:
+      let now = epochTime()
+      if (now - bs.lastFlushTime) * 1000.0 >= bs.flushIntervalMs.float:
+        bufFlush(s)
+
+proc bufClose(s: Stream) {.nimcall.} =
+  {.cast(raises: []).}: {.cast(tags: []).}:
+    let bs = BufferedStream(s)
+    bufFlush(s)
+    bs.inner.close()
+
+proc newBufferedStream*(inner: Stream, maxSize: int = defaultBufferSize,
+                        flushLevel: LogLevel = LogLevel.ERROR,
+                        flushIntervalMs: int = defaultFlushIntervalMs): BufferedStream =
+  new(result)
+  result.inner = inner
+  result.buf = newStringOfCap(maxSize)
+  result.maxSize = maxSize
+  result.flushLevel = flushLevel
+  result.flushIntervalMs = flushIntervalMs
+  result.lastFlushTime = epochTime()
+  result.writeDataImpl = bufWrite
+  result.flushImpl = bufFlush
+  result.closeImpl = bufClose
+
 # -- Async stream wrapper --
 
 type
@@ -244,24 +314,71 @@ proc buildMessage*(args: varargs[string]): string =
     if uint8(i) notin used:
       result &= " " & args[i]
 
-proc writeLog*(logger: Logger, level: string, filename: string, line: int,
+var cachedSecond: int64 = 0
+var cachedTimestamp: string = ""
+
+proc formatTimestamp(): string =
+  let t = getTime()
+  let sec = t.toUnix()
+  let ms = t.nanosecond div 1_000_000
+  if sec != cachedSecond:
+    cachedSecond = sec
+    cachedTimestamp = t.utc.format("yyyy-MM-dd'T'HH:mm:ss")
+  result = newStringOfCap(24)
+  result.add cachedTimestamp
+  result.add '.'
+  if ms < 10: result.add "00"
+  elif ms < 100: result.add '0'
+  result.addInt ms
+  result.add 'Z'
+
+proc escapeJsonStr(buf: var string, s: string) =
+  for c in s:
+    case c
+    of '"': buf.add "\\\""
+    of '\\': buf.add "\\\\"
+    of '\n': buf.add "\\n"
+    of '\r': buf.add "\\r"
+    of '\t': buf.add "\\t"
+    of '\b': buf.add "\\b"
+    of '\f': buf.add "\\f"
+    else:
+      if ord(c) < 0x20:
+        buf.add "\\u00"
+        buf.add toHex(ord(c), 2).toLowerAscii()
+      else:
+        buf.add c
+
+proc writeLog*(logger: Logger, level: LogLevel, filename: string, line: int,
                message: string, fields: JsonNode = nil) =
-  let recordLevel = parseEnum[LogLevel](level)
-  if recordLevel < logger.level:
+  if level < logger.level:
     return
   var extra: JsonNode
-  if not logger.extra.isNil:
-    extra = logger.extra.copy()
-    if not fields.isNil and fields.kind == JObject:
+  let hasContext = not logContext.isNil
+  let hasLoggerExtra = not logger.extra.isNil
+  let hasFields = not fields.isNil and fields.kind == JObject
+  # Merge order: logContext (lowest) → logger.extra → fields (highest)
+  # Fast path: no merging needed
+  if not hasContext and not hasFields:
+    extra = logger.extra  # nil or existing ref, no copy
+  elif not hasContext and not hasLoggerExtra:
+    extra = fields
+  else:
+    # Need to merge — copy the base and overlay
+    if hasContext:
+      extra = logContext.copy()
+    else:
+      extra = newJObject()
+    if hasLoggerExtra:
+      for key, val in logger.extra:
+        extra[key] = val
+    if hasFields:
       for key, val in fields:
         extra[key] = val
-  elif not fields.isNil:
-    extra = fields.copy()
-  else:
-    extra = nil
+  let levelStr = $level
   var record = LogRecord(
-    timestamp: now().utc.format("yyyy-MM-dd'T'HH:mm:ss'Z'"),
-    level: level,
+    timestamp: formatTimestamp(),
+    level: levelStr,
     name: logger.name,
     filename: filename,
     line: line,
@@ -271,25 +388,38 @@ proc writeLog*(logger: Logger, level: string, filename: string, line: int,
   for mw in middleware:
     if not mw(record):
       return
-  var output = %* {
-    "timestamp": record.timestamp,
-    "level": record.level,
-    "name": record.name,
-    "filename": record.filename,
-    "line": record.line,
-    "message": record.message
-  }
+  # Re-parse level only if middleware may have changed it
+  let outLevel = if record.level == levelStr: level
+                 else: parseEnum[LogLevel](record.level)
+  var buf = newStringOfCap(256)
+  buf.add "{\"timestamp\":\""
+  buf.add record.timestamp
+  buf.add "\",\"level\":\""
+  buf.add record.level
+  buf.add "\",\"name\":\""
+  buf.escapeJsonStr(record.name)
+  buf.add "\",\"filename\":\""
+  buf.escapeJsonStr(record.filename)
+  buf.add "\",\"line\":"
+  buf.addInt record.line
+  buf.add ",\"message\":\""
+  buf.escapeJsonStr(record.message)
+  buf.add "\""
   if not record.extra.isNil and record.extra.kind == JObject:
-    output["extra"] = record.extra
-  let outLevel = parseEnum[LogLevel](record.level)
-  let line = $output
+    buf.add ",\"extra\":"
+    buf.add $record.extra
+  buf.add "}"
   for o in outputs:
     if outLevel < o.level:
       continue
     if o.names.len > 0 and record.name notin o.names:
       continue
-    o.stream.writeLine(line)
-    o.stream.flush()
+    o.stream.writeLine(buf)
+    if o.stream of BufferedStream:
+      if outLevel >= BufferedStream(o.stream).flushLevel:
+        o.stream.flush()
+    else:
+      o.stream.flush()
 
 proc genLogCall(level: LogLevel, logger: NimNode, args: NimNode): NimNode =
   if level < CompileLogLevel:
@@ -302,7 +432,7 @@ proc genLogCall(level: LogLevel, logger: NimNode, args: NimNode): NimNode =
     else:
       call.add(newCall(bindSym"toLogStr", arg))
   let info = lineInfoObj(logger)
-  let levelStr = newLit($level)
+  let levelLit = newLit(level)
   let filename = newLit(info.filename.relativePath(getProjectPath()))
   let line = newLit(info.line)
   if namedArgs.len > 0:
@@ -313,11 +443,11 @@ proc genLogCall(level: LogLevel, logger: NimNode, args: NimNode): NimNode =
       buildFields.add(
         newCall(ident"[]=", fieldsVar, newLit(key), newCall(ident"%", val))
       )
-    let writeCall = newCall(bindSym"writeLog", logger, levelStr, filename, line, call, fieldsVar)
+    let writeCall = newCall(bindSym"writeLog", logger, levelLit, filename, line, call, fieldsVar)
     buildFields.add(writeCall)
     result = buildFields
   else:
-    result = newCall(bindSym"writeLog", logger, levelStr, filename, line, call)
+    result = newCall(bindSym"writeLog", logger, levelLit, filename, line, call)
 
 macro trace*(logger: typed, args: varargs[untyped]): untyped =
   genLogCall(LogLevel.TRACE, logger, args)
@@ -343,7 +473,7 @@ template time*(logger: Logger, message: string, body: untyped) =
   let durationMs = (cpuTime() - start) * 1000.0
   let fields = newJObject()
   fields["duration_ms"] = %durationMs
-  writeLog(logger, $LogLevel.INFO, instantiationInfo().filename, instantiationInfo().line, message, fields)
+  writeLog(logger, LogLevel.INFO, instantiationInfo().filename, instantiationInfo().line, message, fields)
 
 template time*(logger: Logger, level: LogLevel, message: string, body: untyped) =
   let start = cpuTime()
@@ -351,7 +481,7 @@ template time*(logger: Logger, level: LogLevel, message: string, body: untyped) 
   let durationMs = (cpuTime() - start) * 1000.0
   let fields = newJObject()
   fields["duration_ms"] = %durationMs
-  writeLog(logger, $level, instantiationInfo().filename, instantiationInfo().line, message, fields)
+  writeLog(logger, level, instantiationInfo().filename, instantiationInfo().line, message, fields)
 
 proc initLogger*(callerInfo: tuple[filename: string, line: int, column: int],
                   name: string, extra: JsonNode): Logger =
@@ -942,11 +1072,18 @@ Examples:
 
   proc formatTimestamp(raw: string, tz: string, timeFmt: string): string =
     try:
-      let dt = raw.parse("yyyy-MM-dd'T'HH:mm:ss'Z'", utc())
+      # Extract milliseconds if present (e.g. ".139" from "...ss.139Z")
+      var msStr = ""
+      var parseStr = raw
+      let dotIdx = raw.rfind('.')
+      if dotIdx > 0 and raw.endsWith("Z"):
+        msStr = raw[dotIdx ..< ^1]  # ".139"
+        parseStr = raw[0 ..< dotIdx] & "Z"
+      let dt = parseStr.parse("yyyy-MM-dd'T'HH:mm:ss'Z'", utc())
       let epoch = dt.toTime().toUnix()
       if tz.toLowerAscii() == "utc":
         if timeFmt == defaultTimeFormat:
-          return dt.format("yyyy-MM-dd'T'HH:mm:ss'Z'") & " UTC"
+          return dt.format("yyyy-MM-dd'T'HH:mm:ss") & msStr & "Z UTC"
         else:
           let prev = getEnv("TZ")
           putEnv("TZ", "UTC")
@@ -955,10 +1092,10 @@ Examples:
           if prev.len > 0: putEnv("TZ", prev)
           else: delEnv("TZ")
           tzset()
-          return ts & " UTC"
+          return ts & msStr & " UTC"
       elif tz.toLowerAscii() == "local":
         let (ts, offset, abbr) = formatWithTz(epoch, timeFmt)
-        return ts & offset & " " & abbr
+        return ts & msStr & offset & " " & abbr
       else:
         let prev = getEnv("TZ")
         putEnv("TZ", resolveTimezone(tz))
@@ -967,7 +1104,7 @@ Examples:
         if prev.len > 0: putEnv("TZ", prev)
         else: delEnv("TZ")
         tzset()
-        return ts & offset & " " & abbr
+        return ts & msStr & offset & " " & abbr
     except CatchableError:
       return raw
 
