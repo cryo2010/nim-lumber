@@ -1,4 +1,4 @@
-import src/lumber
+import ../src/lumber
 import std/[json, streams]
 
 type

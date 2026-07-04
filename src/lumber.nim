@@ -3,7 +3,9 @@
 ## Compile with `-d:lumberLevel=INFO` to set the minimum log level.
 ## Log calls below the compile-time threshold are completely eliminated.
 
-import std/[json, jsonutils, times, macros, strutils, os, streams, algorithm]
+import std/[jsonutils, times, macros, strutils, os, streams, algorithm, exitprocs, locks]
+import std/json
+export json
 
 type
   LogLevel* = enum
@@ -33,12 +35,53 @@ type
 var middleware*: seq[LogMiddleware] = @[]
 var outputs*: seq[Output] = @[Output(stream: newFileStream(stdout))]
 var logContext* {.threadvar.}: JsonNode
+var writeLock*: Lock
+
+initLock(writeLock)
 
 proc use*(mw: LogMiddleware) =
   middleware.add(mw)
 
 proc clearMiddleware*() =
   middleware.setLen(0)
+
+proc flushAll*() =
+  ## Flush all output streams. Call this before exiting to ensure
+  ## buffered log data is written.
+  for o in outputs:
+    try:
+      o.stream.flush()
+    except CatchableError:
+      discard
+
+proc shutdown*() =
+  ## Flush and close all output streams. Call on graceful exit.
+  for o in outputs:
+    try:
+      o.stream.flush()
+      o.stream.close()
+    except CatchableError:
+      discard
+
+when defined(posix):
+  import std/posix
+
+addExitProc(proc() = flushAll())
+
+proc flushOnExit*() =
+  ## Register SIGTERM/SIGINT signal handlers that flush all outputs
+  ## before process exit. Call once at startup if your application
+  ## may be terminated by signals.
+  ## Note: atexit flush is already registered automatically on import.
+  setControlCHook(proc() {.noconv.} =
+    shutdown()
+    quit(130)
+  )
+  when defined(posix):
+    proc handleTerm(sig: cint) {.noconv.} =
+      shutdown()
+      quit(143)
+    discard posix.signal(SIGTERM, handleTerm)
 
 template withLogContext*(fields: JsonNode, body: untyped) =
   let prev = logContext
@@ -248,6 +291,7 @@ type
   AsyncStream* = ref object of Stream
     state: ptr AsyncState
     thread: Thread[ptr AsyncState]
+    closed: bool
 
 proc asyncWriterLoop(state: ptr AsyncState) {.thread.} =
   while true:
@@ -264,6 +308,7 @@ proc asyncWriterLoop(state: ptr AsyncState) {.thread.} =
 proc asyncWrite(s: Stream, buffer: pointer, bufLen: int) {.nimcall.} =
   {.cast(raises: []).}: {.cast(tags: []).}:
     let a = AsyncStream(s)
+    if a.closed: return
     var data = newString(bufLen)
     copyMem(addr data[0], buffer, bufLen)
     a.state.chan.send(AsyncMsg(data: data))
@@ -271,11 +316,14 @@ proc asyncWrite(s: Stream, buffer: pointer, bufLen: int) {.nimcall.} =
 proc asyncFlush(s: Stream) {.nimcall.} =
   {.cast(raises: []).}: {.cast(tags: []).}:
     let a = AsyncStream(s)
+    if a.closed: return
     a.state.chan.send(AsyncMsg(isFlush: true))
 
 proc asyncClose(s: Stream) {.nimcall.} =
   {.cast(raises: []).}: {.cast(tags: []).}:
     let a = AsyncStream(s)
+    if a.closed: return
+    a.closed = true
     a.state.chan.send(AsyncMsg(isClose: true))
     joinThread(a.thread)
     a.state.chan.close()
@@ -314,8 +362,8 @@ proc buildMessage*(args: varargs[string]): string =
     if uint8(i) notin used:
       result &= " " & args[i]
 
-var cachedSecond: int64 = 0
-var cachedTimestamp: string = ""
+var cachedSecond {.threadvar.}: int64
+var cachedTimestamp {.threadvar.}: string
 
 proc formatTimestamp(): string =
   let t = getTime()
@@ -356,7 +404,7 @@ proc writeLog*(logger: Logger, level: LogLevel, filename: string, line: int,
   var extra: JsonNode
   let hasContext = not logContext.isNil
   let hasLoggerExtra = not logger.extra.isNil
-  let hasFields = not fields.isNil and fields.kind == JObject
+  let hasFields = not fields.isNil and fields.kind == JObject and fields.len > 0
   # Merge order: logContext (lowest) → logger.extra → fields (highest)
   # Fast path: no merging needed
   if not hasContext and not hasFields:
@@ -385,69 +433,137 @@ proc writeLog*(logger: Logger, level: LogLevel, filename: string, line: int,
     message: message,
     extra: extra
   )
-  for mw in middleware:
-    if not mw(record):
-      return
-  # Re-parse level only if middleware may have changed it
-  let outLevel = if record.level == levelStr: level
-                 else: parseEnum[LogLevel](record.level)
-  var buf = newStringOfCap(256)
-  buf.add "{\"timestamp\":\""
-  buf.add record.timestamp
-  buf.add "\",\"level\":\""
-  buf.add record.level
-  buf.add "\",\"name\":\""
-  buf.escapeJsonStr(record.name)
-  buf.add "\",\"filename\":\""
-  buf.escapeJsonStr(record.filename)
-  buf.add "\",\"line\":"
-  buf.addInt record.line
-  buf.add ",\"message\":\""
-  buf.escapeJsonStr(record.message)
-  buf.add "\""
-  if not record.extra.isNil and record.extra.kind == JObject:
-    buf.add ",\"extra\":"
-    buf.add $record.extra
-  buf.add "}"
-  for o in outputs:
-    if outLevel < o.level:
-      continue
-    if o.names.len > 0 and record.name notin o.names:
-      continue
-    o.stream.writeLine(buf)
-    if o.stream of BufferedStream:
-      if outLevel >= BufferedStream(o.stream).flushLevel:
+  withLock writeLock:
+    for mw in middleware:
+      if not mw(record):
+        return
+    # Re-parse level only if middleware may have changed it
+    let outLevel = if record.level == levelStr: level
+                   else: parseEnum[LogLevel](record.level)
+    var buf = newStringOfCap(256)
+    buf.add "{\"timestamp\":\""
+    buf.add record.timestamp
+    buf.add "\",\"level\":\""
+    buf.add record.level
+    buf.add "\",\"name\":\""
+    buf.escapeJsonStr(record.name)
+    buf.add "\",\"filename\":\""
+    buf.escapeJsonStr(record.filename)
+    buf.add "\",\"line\":"
+    buf.addInt record.line
+    buf.add ",\"message\":\""
+    buf.escapeJsonStr(record.message)
+    buf.add "\""
+    if not record.extra.isNil and record.extra.kind == JObject:
+      buf.add ",\"extra\":"
+      buf.add $record.extra
+    buf.add "}"
+    for o in outputs:
+      if outLevel < o.level:
+        continue
+      if o.names.len > 0 and record.name notin o.names:
+        continue
+      o.stream.writeLine(buf)
+      if o.stream of BufferedStream:
+        if outLevel >= BufferedStream(o.stream).flushLevel:
+          o.stream.flush()
+      else:
         o.stream.flush()
-    else:
-      o.stream.flush()
+
+proc exceptionToJson*(e: ref Exception): JsonNode =
+  ## Convert an exception to a JSON object with error, errorType, and stackTrace fields.
+  result = newJObject()
+  result["error"] = %e.msg
+  result["errorType"] = %($e.name)
+  let trace = e.getStackTrace()
+  if trace.len > 0:
+    result["stackTrace"] = %trace
+
+proc addExceptionFields*(fields: JsonNode, e: ref Exception) =
+  ## Add exception fields. If multiple exceptions are logged, stores them as an array.
+  if fields.hasKey("errors"):
+    fields["errors"].add(exceptionToJson(e))
+  elif fields.hasKey("error"):
+    # Second exception — convert to array format
+    let first = newJObject()
+    first["error"] = fields["error"]
+    first["errorType"] = fields["errorType"]
+    if fields.hasKey("stackTrace"):
+      first["stackTrace"] = fields["stackTrace"]
+    fields.delete("error")
+    fields.delete("errorType")
+    if fields.hasKey("stackTrace"):
+      fields.delete("stackTrace")
+    fields["errors"] = %[first, exceptionToJson(e)]
+  else:
+    let obj = exceptionToJson(e)
+    for key, val in obj:
+      fields[key] = val
+
+proc logArg*[T](args: var seq[string], fields: JsonNode, val: T) =
+  ## Compile-time dispatch: exceptions get their fields extracted,
+  ## everything else becomes a format string argument.
+  when T is ref Exception:
+    addExceptionFields(fields, val)
+  else:
+    args.add(toLogStr(val))
+
+proc logKwarg*[T](fields: JsonNode, key: string, val: T) =
+  ## Compile-time dispatch for keyword args: exceptions get their fields
+  ## extracted (key is ignored), everything else becomes a JSON field.
+  when T is ref Exception:
+    addExceptionFields(fields, val)
+  else:
+    fields[key] = %val
+
+proc buildMessageFromSeq*(args: seq[string]): string =
+  if args.len == 0: return ""
+  if args.len == 1: return args[0]
+  result = args[0]
+  var used: set[uint8] = {}
+  for i in 1 ..< args.len:
+    let placeholder = "{" & $(i - 1) & "}"
+    if placeholder in result:
+      result = result.replace(placeholder, args[i])
+      used.incl(uint8(i))
+  for i in 1 ..< args.len:
+    if uint8(i) notin used:
+      result &= " " & args[i]
 
 proc genLogCall(level: LogLevel, logger: NimNode, args: NimNode): NimNode =
   if level < CompileLogLevel:
     return newStmtList()
-  var call = newCall(bindSym"buildMessage")
+  var positionalArgs: seq[NimNode] = @[]
   var namedArgs: seq[(string, NimNode)] = @[]
   for arg in args:
     if arg.kind == nnkExprEqExpr:
       namedArgs.add(($arg[0], arg[1]))
     else:
-      call.add(newCall(bindSym"toLogStr", arg))
+      positionalArgs.add(arg)
   let info = lineInfoObj(logger)
   let levelLit = newLit(level)
   let filename = newLit(info.filename.relativePath(getProjectPath()))
   let line = newLit(info.line)
-  if namedArgs.len > 0:
-    let fieldsVar = genSym(nskLet, "fields")
-    let buildFields = newStmtList()
-    buildFields.add(newLetStmt(fieldsVar, newCall(ident"newJObject")))
-    for (key, val) in namedArgs:
-      buildFields.add(
-        newCall(ident"[]=", fieldsVar, newLit(key), newCall(ident"%", val))
-      )
-    let writeCall = newCall(bindSym"writeLog", logger, levelLit, filename, line, call, fieldsVar)
-    buildFields.add(writeCall)
-    result = buildFields
-  else:
-    result = newCall(bindSym"writeLog", logger, levelLit, filename, line, call)
+  # Always generate fields + seq-based message building to support exception detection
+  let fieldsVar = genSym(nskVar, "fields")
+  let argsVar = genSym(nskVar, "args")
+  let stmts = newStmtList()
+  stmts.add(newVarStmt(fieldsVar, newCall(ident"newJObject")))
+  stmts.add(newVarStmt(argsVar, newNimNode(nnkCall).add(
+    newNimNode(nnkBracketExpr).add(bindSym"newSeqOfCap", ident"string"),
+    newLit(positionalArgs.len)
+  )))
+  for arg in positionalArgs:
+    stmts.add(newCall(bindSym"logArg", argsVar, fieldsVar, arg))
+  for (key, val) in namedArgs:
+    stmts.add(
+      newCall(bindSym"logKwarg", fieldsVar, newLit(key), val)
+    )
+  let msgCall = newCall(bindSym"buildMessageFromSeq", argsVar)
+  # If no named args, only pass fields when they have entries (exception was found)
+  let writeCall = newCall(bindSym"writeLog", logger, levelLit, filename, line, msgCall, fieldsVar)
+  stmts.add(writeCall)
+  result = stmts
 
 macro trace*(logger: typed, args: varargs[untyped]): untyped =
   genLogCall(LogLevel.TRACE, logger, args)
@@ -1134,13 +1250,40 @@ Examples:
     stripAnsi(theme)
     reset = ""
 
+  proc renderException(exc: JsonNode, theme: Theme, indent: string): string =
+    ## Render a single exception object with its stack trace.
+    for key, val in exc:
+      if key == "stackTrace" and val.kind == JString:
+        result &= "\n" & indent & theme.extraKey & key & reset & ":"
+        let trace = val.getStr()
+        for frame in trace.strip().splitLines():
+          if frame.len > 0:
+            result &= "\n" & indent & "  " & theme.extraValue & frame & (if theme.extraValue.len > 0: reset else: "")
+      else:
+        result &= "\n" & indent & theme.extraKey & key & reset & ": " &
+                  theme.extraValue & $val & (if theme.extraValue.len > 0: reset else: "")
+
+  proc hasExceptionFields(node: JsonNode): bool =
+    node.hasKey("stackTrace") or node.hasKey("errors")
+
   proc renderExtra(displayExtra: JsonNode, theme: Theme, pretty: bool): string =
     if displayExtra.isNil or displayExtra.len == 0:
       return ""
-    if pretty:
+    if pretty or hasExceptionFields(displayExtra):
       for key, val in displayExtra:
-        result &= "\n  " & theme.extraKey & key & reset & ": " &
-                  theme.extraValue & $val & (if theme.extraValue.len > 0: reset else: "")
+        if key == "errors" and val.kind == JArray:
+          for i, exc in val.elems:
+            result &= "\n  " & theme.extraKey & "exception " & $(i + 1) & reset & ":"
+            result &= renderException(exc, theme, "    ")
+        elif key == "stackTrace" and val.kind == JString:
+          result &= "\n  " & theme.extraKey & key & reset & ":"
+          let trace = val.getStr()
+          for frame in trace.strip().splitLines():
+            if frame.len > 0:
+              result &= "\n    " & theme.extraValue & frame & (if theme.extraValue.len > 0: reset else: "")
+        else:
+          result &= "\n  " & theme.extraKey & key & reset & ": " &
+                    theme.extraValue & $val & (if theme.extraValue.len > 0: reset else: "")
     else:
       result = " " & theme.filename & $displayExtra & reset
 

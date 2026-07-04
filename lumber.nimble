@@ -12,3 +12,15 @@ bin           = @["lumber"]
 # Dependencies
 
 requires "nim >= 2.2.10"
+
+# Tasks
+
+task test, "Run the test suite":
+  exec "nim c --hints:off --threads:on -r tests/test_logger.nim"
+  exec "nim c --hints:off --threads:on -r tests/test_middleware.nim"
+
+task buildDev, "Build the CLI (debug, with stack traces)":
+  exec "nim c --threads:on -o:lumber src/lumber.nim"
+
+task buildProd, "Build the CLI (optimized release)":
+  exec "nim c -d:release --threads:on --opt:speed --hints:off -o:lumber src/lumber.nim"

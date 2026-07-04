@@ -4,19 +4,27 @@ A compile-time optimized JSON logger for Nim with a built-in CLI prettifier.
 
 ## Features
 
+- **Zero dependencies** - only uses the Nim standard library
+- **Thread-safe** - safe for concurrent use from multiple threads
 - **Compile-time level filtering** - log calls below the threshold are eliminated from the binary entirely, with zero runtime cost
 - **Structured JSON output** - every log line is valid JSON with timestamp, level, name, filename, line number, and message
+- **Millisecond timestamps** - ISO 8601 with `.NNN` precision
 - **Structured messages** - named `key=value` arguments become discrete JSON fields, queryable by log aggregators
+- **Exception logging** - pass any `ref Exception` and lumber extracts the message, type, and stack trace automatically
 - **String interpolation** - `{0}`, `{1}` placeholders in messages are replaced with stringified arguments
 - **Type-aware object formatting** - object types are automatically prefixed with their type name (e.g. `User(name: "Dude", age: 40)`)
 - **Runtime level filtering** - per-logger level short-circuits before building records
 - **Child loggers** - create derived loggers that inherit and extend the parent's context
 - **Extra fields** - attach structured metadata to loggers, merged into every log line under an `"extra"` key
+- **Thread-local context** - `withLogContext` attaches ambient fields to all loggers in the current call stack
 - **Middleware** - a chain of functions that can enrich, transform, or suppress log records at runtime
+- **Built-in middleware** - rate limiter, sampler, and level-aware sampler for production use
 - **Multiple output streams** - write to stdout, files, or any custom `Stream` simultaneously
 - **Rotating file streams** - built-in size-based and time-based file rotation
+- **Buffered streams** - hybrid flush strategy (size, interval, and level threshold) for high throughput
 - **Async stream wrapper** - non-blocking I/O via a background writer thread
-- **CLI prettifier** - pipe JSON logs through the `lumber` binary for colored, human-readable output with level filtering, field filtering, and timezone support
+- **Graceful shutdown** - automatic flush on exit, opt-in signal handling for SIGTERM/SIGINT
+- **CLI prettifier** - pipe JSON logs through the `lumber` binary for colored, human-readable output with level filtering, field filtering, timezone support, and customizable format/colors via TOML config
 
 ## Installation
 
@@ -126,6 +134,56 @@ logger.info("login", user="alice")
 # extra.user is "alice", not "system"
 ```
 
+### Exception Logging
+
+Pass any `ref Exception` as an argument — lumber automatically extracts the message, type name, and stack trace into structured fields.
+
+```nim
+proc loadConfig() =
+  raise newException(IOError, "file not found: config.toml")
+
+proc initApp() =
+  loadConfig()
+
+try:
+  initApp()
+except IOError as e:
+  logger.error("Failed to load config", e)
+```
+
+Output:
+
+```json
+{"level":"ERROR","message":"Failed to load config","extra":{"error":"file not found: config.toml","errorType":"IOError","stackTrace":"app.nim(8) main\napp.nim(5) initApp\napp.nim(2) loadConfig\n"}}
+```
+
+The CLI prettifier renders stack traces on separate lines automatically:
+
+```
+[ERROR] (app.nim:10) api: Failed to load config
+  error: "file not found: config.toml"
+  errorType: "IOError"
+  stackTrace:
+    app.nim(8) main
+    app.nim(5) initApp
+    app.nim(2) loadConfig
+```
+
+Exceptions work as positional args or keyword args:
+
+```nim
+logger.error("Failed", e)                   # positional
+logger.error("Failed", error=e)             # kwarg (key is ignored)
+logger.error("Failed", e, retries=3)        # mixed with other fields
+```
+
+Multiple exceptions are stored as an array:
+
+```nim
+logger.error("Multiple failures", e1, e2)
+# extra: {"errors": [{"error":"...","errorType":"...","stackTrace":"..."}, ...]}
+```
+
 ### Timing Blocks
 
 Measure the duration of a block and log it automatically with `duration_ms` in extra:
@@ -187,6 +245,30 @@ type DbContext = object
 var dbLogger = reqLogger.child(name = "db", extra = DbContext(host: "db.local", port: 5432))
 ```
 
+### Thread-Local Context
+
+Use `withLogContext` to attach ambient fields that any logger on the current thread will pick up — without passing the logger through function calls.
+
+```nim
+var logger = newLogger(name = "api")
+
+withLogContext(%* {"requestId": "abc-123", "userId": 42}):
+  logger.info("handling request")
+  # extra: {"requestId": "abc-123", "userId": 42}
+
+  processOrder(order)  # any logger inside also sees requestId/userId
+
+  # Nesting adds fields, restores on exit
+  withLogContext(%* {"orderId": "ord-789"}):
+    logger.info("processing payment")
+    # extra: {"requestId": "abc-123", "userId": 42, "orderId": "ord-789"}
+
+  logger.info("done")
+  # extra: {"requestId": "abc-123", "userId": 42} — orderId is gone
+```
+
+Priority order (highest wins): message fields > logger extra > thread-local context.
+
 ### Middleware
 
 Middleware functions receive a mutable `LogRecord` and return `true` to continue the chain or `false` to suppress the record.
@@ -218,6 +300,24 @@ type LogRecord* = object
   line*: int
   message*: string
   extra*: JsonNode
+```
+
+### Built-in Middleware
+
+Import `lumber/middleware` for ready-made middleware:
+
+```nim
+import lumber
+import lumber/middleware
+
+# Rate limiter: allow max 5 messages per second from the same source location
+use newRateLimiter(window = 1.0, maxBurst = 5)
+
+# Sampler: log 1 in every 100 messages
+use newSampler(rate = 100)
+
+# Level sampler: sample DEBUG/TRACE at 1-in-50, always pass WARN+
+use newLevelSampler(level = LogLevel.DEBUG, rate = 50)
 ```
 
 ### Outputs and Routing
