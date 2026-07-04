@@ -26,6 +26,11 @@ for i in 0 ..< 250_000:
 
 reqLogger.warn("Disk usage at {0}%", 92)
 var dbLogger = reqLogger.child(name = "db", extra = %* {"host": "db.local", "port": 5432})
+
+dbLogger.time("connection attempt"):
+  for i in 0 ..< 1_000_000:
+    discard i
+
 dbLogger.error("Failed to connect to database")
 logger.fatal("Shutting down")
 

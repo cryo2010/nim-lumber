@@ -337,6 +337,22 @@ macro error*(logger: typed, args: varargs[untyped]): untyped =
 macro fatal*(logger: typed, args: varargs[untyped]): untyped =
   genLogCall(LogLevel.FATAL, logger, args)
 
+template time*(logger: Logger, message: string, body: untyped) =
+  let start = cpuTime()
+  body
+  let durationMs = (cpuTime() - start) * 1000.0
+  let fields = newJObject()
+  fields["duration_ms"] = %durationMs
+  writeLog(logger, $LogLevel.INFO, instantiationInfo().filename, instantiationInfo().line, message, fields)
+
+template time*(logger: Logger, level: LogLevel, message: string, body: untyped) =
+  let start = cpuTime()
+  body
+  let durationMs = (cpuTime() - start) * 1000.0
+  let fields = newJObject()
+  fields["duration_ms"] = %durationMs
+  writeLog(logger, $level, instantiationInfo().filename, instantiationInfo().line, message, fields)
+
 proc initLogger*(callerInfo: tuple[filename: string, line: int, column: int],
                   name: string, extra: JsonNode): Logger =
   var modName = callerInfo.filename
@@ -385,6 +401,7 @@ when isMainModule:
     yellow = "\e[33m"
     brightRed = "\e[91m"
     magenta = "\e[35m"
+    cyan = "\e[36m"
 
   proc colorForLevel(level: string): string =
     case level
@@ -418,6 +435,7 @@ Options:
   --level <level>     Minimum log level to display (trace, debug, info, warn, error, fatal)
   --filter <expr>     Filter logs by field value (can be repeated)
   --tz <timezone>     Timezone for timestamps (IANA name or abbreviation like PST, EST, UTC)
+  --pretty            Show extra fields indented below the message
   --help, -h          Show this help
   --version, -v       Show version
 
@@ -455,6 +473,7 @@ Examples:
       level: LogLevel
       tz: string
       filters: seq[Filter]
+      pretty: bool
 
   proc parseFilter(expr: string): Filter =
     # Order matters — check longer operators first
@@ -548,7 +567,7 @@ Examples:
     true
 
   proc parseArgs(): CliOptions =
-    result = CliOptions(level: LogLevel.TRACE, tz: "local", filters: @[])
+    result = CliOptions(level: LogLevel.TRACE, tz: "local", filters: @[], pretty: false)
     var p = initOptParser()
     while true:
       p.next()
@@ -596,6 +615,8 @@ Examples:
               stderr.writeLine("lumber: --tz requires a value")
               quit(1)
           result.tz = tzVal
+        of "pretty":
+          result.pretty = true
         else:
           stderr.writeLine("lumber: unknown option '--" & p.key & "'")
           quit(1)
@@ -709,9 +730,31 @@ Examples:
       let extra = j.getOrDefault("extra")
       let color = colorForLevel(level)
       let paddedLevel = alignLeft(level, 5)
-      var output = gray & displayTs & reset & " " & color & "[" & paddedLevel & "]" & reset & " " & lightGray & "(" & filename & ":" & $lineNum & ")" & reset & " " & message
+      var durationStr = ""
+      var displayExtra: JsonNode = nil
       if not extra.isNil and extra.kind == JObject and extra.len > 0:
-        output &= " " & lightGray & $extra & reset
+        if extra.hasKey("duration_ms"):
+          let ms = extra["duration_ms"].getFloat()
+          if ms >= 1000.0:
+            durationStr = " " & gray & "(" & formatFloat(ms / 1000.0, ffDecimal, 2) & "s)" & reset
+          else:
+            durationStr = " " & gray & "(" & $ms.int & "ms)" & reset
+          if extra.len > 1:
+            displayExtra = newJObject()
+            for key, val in extra:
+              if key != "duration_ms":
+                displayExtra[key] = val
+          # else no extra to show
+        else:
+          displayExtra = extra
+      let name = j.getOrDefault("name").getStr("")
+      var output = gray & displayTs & reset & " " & color & "[" & paddedLevel & "]" & reset & " " & lightGray & "(" & filename & ":" & $lineNum & ")" & reset & " " & cyan & name & reset & ": " & message & durationStr
+      if not displayExtra.isNil and displayExtra.len > 0:
+        if opts.pretty:
+          for key, val in displayExtra:
+            output &= "\n  " & cyan & key & reset & ": " & $val
+        else:
+          output &= " " & lightGray & $displayExtra & reset
       stdout.writeLine(output)
     except JsonParsingError:
       stdout.writeLine(line)

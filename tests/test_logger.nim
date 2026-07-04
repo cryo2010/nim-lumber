@@ -110,6 +110,20 @@ test "structured fields with no message args":
   var logger = newLogger(name = "test")
   logger.info("event", status=200, path="/api/health")
 
+test "time block logs duration":
+  var logger = newLogger(name = "test")
+  logger.time("db query"):
+    var sum = 0
+    for i in 0 ..< 1000:
+      sum += i
+
+test "time block with custom level":
+  var logger = newLogger(name = "test")
+  logger.time(LogLevel.DEBUG, "slow op"):
+    var sum = 0
+    for i in 0 ..< 1000:
+      sum += i
+
 test "compile-time no-op for lower levels":
   # This compiles and runs but produces no output when compiled with -d:lumberLevel=INFO
   var logger = newLogger(name = "test")
