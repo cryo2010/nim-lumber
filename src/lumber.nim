@@ -391,27 +391,191 @@ proc child*[T: object](logger: Logger, name: string = "", extra: T): Logger =
   logger.child(name, extra.toJson())
 
 when isMainModule:
-  const
-    reset = "\e[0m"
-    gray = "\e[90m"
-    lightGray = "\e[37m"
-    blue = "\e[34m"
-    lightBlue = "\e[94m"
-    white = "\e[97m"
-    yellow = "\e[33m"
-    brightRed = "\e[91m"
-    magenta = "\e[35m"
-    cyan = "\e[36m"
+  var reset = "\e[0m"
 
-  proc colorForLevel(level: string): string =
+  type
+    Theme = object
+      timestamp: string
+      filename: string
+      name: string
+      message: string
+      duration: string
+      extraKey: string
+      extraValue: string
+      levelTrace: string
+      levelDebug: string
+      levelInfo: string
+      levelWarn: string
+      levelError: string
+      levelFatal: string
+
+  proc colorNameToAnsi(name: string): string =
+    case name.toLowerAscii().replace("_", "")
+    of "black": "\e[30m"
+    of "red": "\e[31m"
+    of "green": "\e[32m"
+    of "yellow": "\e[33m"
+    of "blue": "\e[34m"
+    of "magenta": "\e[35m"
+    of "cyan": "\e[36m"
+    of "white": "\e[97m"
+    of "gray", "grey": "\e[90m"
+    of "lightgray", "lightgrey": "\e[37m"
+    of "lightred", "brightred": "\e[91m"
+    of "lightgreen", "brightgreen": "\e[92m"
+    of "lightyellow", "brightyellow": "\e[93m"
+    of "lightblue", "brightblue": "\e[94m"
+    of "lightmagenta", "brightmagenta": "\e[95m"
+    of "lightcyan", "brightcyan": "\e[96m"
+    of "", "none": ""
+    else: ""
+
+  proc defaultTheme(): Theme =
+    Theme(
+      timestamp: "\e[90m",
+      filename: "\e[37m",
+      name: "\e[36m",
+      message: "",
+      duration: "\e[90m",
+      extraKey: "\e[36m",
+      extraValue: "",
+      levelTrace: "\e[34m",
+      levelDebug: "\e[94m",
+      levelInfo: "\e[97m",
+      levelWarn: "\e[33m",
+      levelError: "\e[91m",
+      levelFatal: "\e[35m",
+    )
+
+  proc colorForLevel(theme: Theme, level: string): string =
     case level
-    of "TRACE": blue
-    of "DEBUG": lightBlue
-    of "INFO": white
-    of "WARN": yellow
-    of "ERROR": brightRed
-    of "FATAL": magenta
-    else: white
+    of "TRACE": theme.levelTrace
+    of "DEBUG": theme.levelDebug
+    of "INFO": theme.levelInfo
+    of "WARN": theme.levelWarn
+    of "ERROR": theme.levelError
+    of "FATAL": theme.levelFatal
+    else: theme.levelInfo
+
+  # -- Minimal TOML parser --
+
+  type TomlTable = seq[(string, string)]  # flat list of "section.key" -> "value"
+
+  proc parseToml(content: string): TomlTable =
+    var section = ""
+    for line in content.splitLines():
+      let stripped = line.strip()
+      if stripped.len == 0 or stripped[0] == '#':
+        continue
+      if stripped[0] == '[' and stripped[^1] == ']':
+        section = stripped[1 ..< ^1].strip()
+        continue
+      let eqIdx = stripped.find('=')
+      if eqIdx < 0:
+        continue
+      let key = stripped[0 ..< eqIdx].strip()
+      var val = stripped[eqIdx + 1 .. ^1].strip()
+      # Strip quotes from string values
+      if val.len >= 2 and val[0] == '"' and val[^1] == '"':
+        val = val[1 ..< ^1]
+      let fullKey = if section.len > 0: section & "." & key else: key
+      result.add((fullKey, val))
+
+  proc getToml(table: TomlTable, key: string, default: string = ""): string =
+    for (k, v) in table:
+      if k == key:
+        return v
+    default
+
+  # -- Config loading --
+
+  proc findGlobalConfig(): string =
+    let xdg = getEnv("XDG_CONFIG_HOME")
+    if xdg.len > 0:
+      let path = xdg / "lumber" / "config.toml"
+      if fileExists(path): return path
+    let home = getEnv("HOME")
+    if home.len > 0:
+      let path = home / ".config" / "lumber" / "config.toml"
+      if fileExists(path): return path
+    ""
+
+  proc findProjectConfig(): string =
+    var dir = getCurrentDir()
+    while true:
+      let path = dir / ".lumber.toml"
+      if fileExists(path): return path
+      let parent = parentDir(dir)
+      if parent == dir: break  # reached root
+      dir = parent
+    ""
+
+  proc loadConfig(path: string, theme: var Theme, fmt: var string,
+                  timeFmt: var string, pretty: var bool, tz: var string,
+                  level: var LogLevel) =
+    if path.len == 0 or not fileExists(path):
+      return
+    let content = readFile(path)
+    let table = parseToml(content)
+    # Format
+    let tmpl = getToml(table, "format.template")
+    if tmpl.len > 0: fmt = tmpl
+    let tf = getToml(table, "format.time_format")
+    if tf.len > 0: timeFmt = tf
+    # Colors
+    let ts = getToml(table, "colors.timestamp")
+    if ts.len > 0: theme.timestamp = colorNameToAnsi(ts)
+    let fn = getToml(table, "colors.filename")
+    if fn.len > 0: theme.filename = colorNameToAnsi(fn)
+    let nm = getToml(table, "colors.name")
+    if nm.len > 0: theme.name = colorNameToAnsi(nm)
+    let msg = getToml(table, "colors.message")
+    if msg.len > 0: theme.message = colorNameToAnsi(msg)
+    let dur = getToml(table, "colors.duration")
+    if dur.len > 0: theme.duration = colorNameToAnsi(dur)
+    let ek = getToml(table, "colors.extra_key")
+    if ek.len > 0: theme.extraKey = colorNameToAnsi(ek)
+    let ev = getToml(table, "colors.extra_value")
+    if ev.len > 0: theme.extraValue = colorNameToAnsi(ev)
+    # Level colors
+    let lt = getToml(table, "colors.level.trace")
+    if lt.len > 0: theme.levelTrace = colorNameToAnsi(lt)
+    let ld = getToml(table, "colors.level.debug")
+    if ld.len > 0: theme.levelDebug = colorNameToAnsi(ld)
+    let li = getToml(table, "colors.level.info")
+    if li.len > 0: theme.levelInfo = colorNameToAnsi(li)
+    let lw = getToml(table, "colors.level.warn")
+    if lw.len > 0: theme.levelWarn = colorNameToAnsi(lw)
+    let le = getToml(table, "colors.level.error")
+    if le.len > 0: theme.levelError = colorNameToAnsi(le)
+    let lf = getToml(table, "colors.level.fatal")
+    if lf.len > 0: theme.levelFatal = colorNameToAnsi(lf)
+    # Options
+    let pVal = getToml(table, "options.pretty")
+    if pVal == "true": pretty = true
+    let tzVal = getToml(table, "options.tz")
+    if tzVal.len > 0: tz = tzVal
+    let lvVal = getToml(table, "options.level")
+    if lvVal.len > 0:
+      try: level = parseEnum[LogLevel](lvVal.toUpperAscii())
+      except ValueError: discard
+
+  proc stripAnsi(theme: var Theme) =
+    theme.timestamp = ""
+    theme.filename = ""
+    theme.name = ""
+    theme.message = ""
+    theme.duration = ""
+    theme.extraKey = ""
+    theme.extraValue = ""
+    theme.levelTrace = ""
+    theme.levelDebug = ""
+    theme.levelInfo = ""
+    theme.levelWarn = ""
+    theme.levelError = ""
+    theme.levelFatal = ""
+
+  const defaultFormat = "{timestamp} [{level}] ({filename}:{line}) {name}: {message}{duration}{extra}"
 
   proc levelOrd(level: string): int =
     case level.toUpperAscii()
@@ -436,8 +600,23 @@ Options:
   --filter <expr>     Filter logs by field value (can be repeated)
   --tz <timezone>     Timezone for timestamps (IANA name or abbreviation like PST, EST, UTC)
   --pretty            Show extra fields indented below the message
+  --format <template> Custom output format using {tokens}
+  --time-format <fmt> Timestamp format using strftime specifiers (default: %Y-%m-%dT%H:%M:%S)
+  --no-color          Disable colored output
+  --config <path>     Path to config file (default: ~/.config/lumber/config.toml)
+  --init              Create a default config file at ~/.config/lumber/config.toml
   --help, -h          Show this help
   --version, -v       Show version
+
+Format tokens:
+  {timestamp}         Timestamp with offset and timezone abbreviation
+  {level}             Log level (padded, e.g. "INFO ")
+  {filename}          Source filename
+  {line}              Source line number
+  {name}              Logger name
+  {message}           Log message
+  {duration}          Duration if present, empty otherwise
+  {extra}             Extra fields (inline or indented with --pretty)
 
 Filter expressions:
   key=value           Exact match
@@ -457,6 +636,7 @@ Examples:
   myapp | lumber --filter userId=1234
   myapp | lumber --filter "latency>500" --filter "path~^/api"
   myapp | lumber --filter "timestamp>2026-07-03T12:00:00Z"
+  myapp | lumber --format "{timestamp} [{level}] {name}: {message}"
   myapp | lumber --tz PST"""
 
   type
@@ -474,6 +654,10 @@ Examples:
       tz: string
       filters: seq[Filter]
       pretty: bool
+      format: string
+      timeFormat: string
+      noColor: bool
+      configPath: string
 
   proc parseFilter(expr: string): Filter =
     # Order matters — check longer operators first
@@ -566,8 +750,61 @@ Examples:
         return false
     true
 
+  const defaultConfigContent = """# lumber CLI prettifier configuration
+# Place this file at ~/.config/lumber/config.toml
+
+[format]
+# template = "{timestamp} [{level}] ({filename}:{line}) {name}: {message}{duration}{extra}"
+# time_format = "%Y-%m-%dT%H:%M:%S"
+
+[colors]
+# timestamp = "gray"
+# filename = "light_gray"
+# name = "cyan"
+# message = ""
+# duration = "gray"
+# extra_key = "cyan"
+# extra_value = ""
+
+[colors.level]
+# trace = "blue"
+# debug = "light_blue"
+# info = "white"
+# warn = "yellow"
+# error = "red"
+# fatal = "magenta"
+
+[options]
+# pretty = false
+# tz = "local"
+# level = "trace"
+"""
+
+  proc initConfig() =
+    let xdg = getEnv("XDG_CONFIG_HOME")
+    let dir = if xdg.len > 0: xdg / "lumber"
+              else: getEnv("HOME") / ".config" / "lumber"
+    let path = dir / "config.toml"
+    if fileExists(path):
+      stderr.writeLine("lumber: config already exists at " & path)
+      quit(1)
+    createDir(dir)
+    writeFile(path, defaultConfigContent)
+    echo "Created " & path
+
+  proc getOptVal(p: var OptParser): string =
+    result = p.val
+    if result.len == 0:
+      p.next()
+      if p.kind == cmdArgument:
+        result = p.key
+      else:
+        return ""
+
   proc parseArgs(): CliOptions =
-    result = CliOptions(level: LogLevel.TRACE, tz: "local", filters: @[], pretty: false)
+    result = CliOptions(level: LogLevel.TRACE, tz: "local", filters: @[],
+                        pretty: false, format: "", timeFormat: "",
+                        noColor: false, configPath: "")
     var p = initOptParser()
     while true:
       p.next()
@@ -581,42 +818,53 @@ Examples:
         of "version", "v":
           echo "lumber " & Version
           quit(0)
+        of "init":
+          initConfig()
+          quit(0)
         of "level":
-          var levelVal = p.val
-          if levelVal.len == 0:
-            p.next()
-            if p.kind == cmdArgument:
-              levelVal = p.key
-            else:
-              stderr.writeLine("lumber: --level requires a value")
-              quit(1)
+          let val = getOptVal(p)
+          if val.len == 0:
+            stderr.writeLine("lumber: --level requires a value")
+            quit(1)
           try:
-            result.level = parseEnum[LogLevel](levelVal.toUpperAscii())
+            result.level = parseEnum[LogLevel](val.toUpperAscii())
           except ValueError:
-            stderr.writeLine("lumber: invalid level '" & levelVal & "'. Expected: trace, debug, info, warn, error, fatal")
+            stderr.writeLine("lumber: invalid level '" & val & "'. Expected: trace, debug, info, warn, error, fatal")
             quit(1)
         of "filter":
-          var filterVal = p.val
-          if filterVal.len == 0:
-            p.next()
-            if p.kind == cmdArgument:
-              filterVal = p.key
-            else:
-              stderr.writeLine("lumber: --filter requires a value")
-              quit(1)
-          result.filters.add(parseFilter(filterVal))
+          let val = getOptVal(p)
+          if val.len == 0:
+            stderr.writeLine("lumber: --filter requires a value")
+            quit(1)
+          result.filters.add(parseFilter(val))
         of "tz":
-          var tzVal = p.val
-          if tzVal.len == 0:
-            p.next()
-            if p.kind == cmdArgument:
-              tzVal = p.key
-            else:
-              stderr.writeLine("lumber: --tz requires a value")
-              quit(1)
-          result.tz = tzVal
+          let val = getOptVal(p)
+          if val.len == 0:
+            stderr.writeLine("lumber: --tz requires a value")
+            quit(1)
+          result.tz = val
+        of "format":
+          let val = getOptVal(p)
+          if val.len == 0:
+            stderr.writeLine("lumber: --format requires a value")
+            quit(1)
+          result.format = val
+        of "time-format", "timeformat":
+          let val = getOptVal(p)
+          if val.len == 0:
+            stderr.writeLine("lumber: --time-format requires a value")
+            quit(1)
+          result.timeFormat = val
+        of "config":
+          let val = getOptVal(p)
+          if val.len == 0:
+            stderr.writeLine("lumber: --config requires a value")
+            quit(1)
+          result.configPath = val
         of "pretty":
           result.pretty = true
+        of "no-color", "nocolor":
+          result.noColor = true
         else:
           stderr.writeLine("lumber: unknown option '--" & p.key & "'")
           quit(1)
@@ -665,13 +913,15 @@ Examples:
     of "SAST": "Africa/Johannesburg"
     else: tz  # Assume it's already an IANA name
 
-  proc formatWithTz(epoch: int64): (string, string, string) =
+  const defaultTimeFormat = "%Y-%m-%dT%H:%M:%S"
+
+  proc formatWithTz(epoch: int64, timeFmt: string): (string, string, string) =
     ## Returns (formatted timestamp, offset, timezone abbreviation) using current TZ
     var t = CTime(epoch)
     var tm: Tm
     discard localtime_r(addr t, tm)
-    var tsBuf: array[32, char]
-    let tsLen = c_strftime(cast[cstring](addr tsBuf[0]), csize_t(32), "%Y-%m-%dT%H:%M:%S", addr tm)
+    var tsBuf: array[64, char]
+    let tsLen = c_strftime(cast[cstring](addr tsBuf[0]), csize_t(64), timeFmt.cstring, addr tm)
     var ts = newString(tsLen)
     for i in 0 ..< tsLen.int:
       ts[i] = tsBuf[i]
@@ -690,20 +940,30 @@ Examples:
       abbr[i] = tzBuf[i]
     (ts, offset, abbr)
 
-  proc formatTimestamp(raw: string, tz: string): string =
+  proc formatTimestamp(raw: string, tz: string, timeFmt: string): string =
     try:
       let dt = raw.parse("yyyy-MM-dd'T'HH:mm:ss'Z'", utc())
       let epoch = dt.toTime().toUnix()
       if tz.toLowerAscii() == "utc":
-        return dt.format("yyyy-MM-dd'T'HH:mm:ss'Z'") & " UTC"
+        if timeFmt == defaultTimeFormat:
+          return dt.format("yyyy-MM-dd'T'HH:mm:ss'Z'") & " UTC"
+        else:
+          let prev = getEnv("TZ")
+          putEnv("TZ", "UTC")
+          tzset()
+          let (ts, _, _) = formatWithTz(epoch, timeFmt)
+          if prev.len > 0: putEnv("TZ", prev)
+          else: delEnv("TZ")
+          tzset()
+          return ts & " UTC"
       elif tz.toLowerAscii() == "local":
-        let (ts, offset, abbr) = formatWithTz(epoch)
+        let (ts, offset, abbr) = formatWithTz(epoch, timeFmt)
         return ts & offset & " " & abbr
       else:
         let prev = getEnv("TZ")
         putEnv("TZ", resolveTimezone(tz))
         tzset()
-        let (ts, offset, abbr) = formatWithTz(epoch)
+        let (ts, offset, abbr) = formatWithTz(epoch, timeFmt)
         if prev.len > 0: putEnv("TZ", prev)
         else: delEnv("TZ")
         tzset()
@@ -713,48 +973,115 @@ Examples:
 
   let opts = parseArgs()
 
+  # Build config: defaults -> global config -> project config -> CLI overrides
+  var theme = defaultTheme()
+  var fmt = defaultFormat
+  var timeFmt = defaultTimeFormat
+  var pretty = opts.pretty
+  var tz = opts.tz
+  var level = opts.level
+
+  if opts.configPath.len > 0:
+    loadConfig(opts.configPath, theme, fmt, timeFmt, pretty, tz, level)
+  else:
+    loadConfig(findGlobalConfig(), theme, fmt, timeFmt, pretty, tz, level)
+    loadConfig(findProjectConfig(), theme, fmt, timeFmt, pretty, tz, level)
+
+  # CLI overrides take precedence
+  if opts.pretty: pretty = true
+  if opts.tz != "local": tz = opts.tz
+  if opts.level != LogLevel.TRACE: level = opts.level
+  if opts.format.len > 0: fmt = opts.format
+  if opts.timeFormat.len > 0: timeFmt = opts.timeFormat
+  if opts.noColor or getEnv("NO_COLOR").len > 0:
+    stripAnsi(theme)
+    reset = ""
+
+  proc renderExtra(displayExtra: JsonNode, theme: Theme, pretty: bool): string =
+    if displayExtra.isNil or displayExtra.len == 0:
+      return ""
+    if pretty:
+      for key, val in displayExtra:
+        result &= "\n  " & theme.extraKey & key & reset & ": " &
+                  theme.extraValue & $val & (if theme.extraValue.len > 0: reset else: "")
+    else:
+      result = " " & theme.filename & $displayExtra & reset
+
+  proc renderLine(fmt: string, theme: Theme, pretty: bool,
+                  timestamp, level, filename: string, lineNum: int,
+                  name, message: string, durationStr: string,
+                  displayExtra: JsonNode): string =
+    var i = 0
+    while i < fmt.len:
+      if fmt[i] == '{':
+        let closeIdx = fmt.find('}', i)
+        if closeIdx > i:
+          let token = fmt[i + 1 ..< closeIdx]
+          case token
+          of "timestamp":
+            result &= theme.timestamp & timestamp & (if theme.timestamp.len > 0: reset else: "")
+          of "level":
+            let color = colorForLevel(theme, level)
+            let padded = alignLeft(level, 5)
+            result &= color & padded & (if color.len > 0: reset else: "")
+          of "filename":
+            result &= theme.filename & filename & (if theme.filename.len > 0: reset else: "")
+          of "line":
+            result &= $lineNum
+          of "name":
+            result &= theme.name & name & (if theme.name.len > 0: reset else: "")
+          of "message":
+            result &= theme.message & message & (if theme.message.len > 0: reset else: "")
+          of "duration":
+            result &= durationStr
+          of "extra":
+            result &= renderExtra(displayExtra, theme, pretty)
+          else:
+            result &= fmt[i .. closeIdx]
+          i = closeIdx + 1
+        else:
+          result &= fmt[i]
+          inc i
+      else:
+        result &= fmt[i]
+        inc i
+
   var line: string
   while stdin.readLine(line):
     try:
       let j = parseJson(line)
-      let level = j.getOrDefault("level").getStr("")
-      if levelOrd(level) < ord(opts.level):
+      let jLevel = j.getOrDefault("level").getStr("")
+      if levelOrd(jLevel) < ord(level):
         continue
       if opts.filters.len > 0 and not matchesAllFilters(j, opts.filters):
         continue
       let timestamp = j.getOrDefault("timestamp").getStr("")
-      let displayTs = formatTimestamp(timestamp, opts.tz)
+      let displayTs = formatTimestamp(timestamp, tz, timeFmt)
       let filename = j.getOrDefault("filename").getStr("")
       let lineNum = j.getOrDefault("line").getInt(0)
       let message = j.getOrDefault("message").getStr("")
       let extra = j.getOrDefault("extra")
-      let color = colorForLevel(level)
-      let paddedLevel = alignLeft(level, 5)
+      let name = j.getOrDefault("name").getStr("")
       var durationStr = ""
       var displayExtra: JsonNode = nil
       if not extra.isNil and extra.kind == JObject and extra.len > 0:
         if extra.hasKey("duration_ms"):
           let ms = extra["duration_ms"].getFloat()
           if ms >= 1000.0:
-            durationStr = " " & gray & "(" & formatFloat(ms / 1000.0, ffDecimal, 2) & "s)" & reset
+            durationStr = " " & theme.duration & "(" & formatFloat(ms / 1000.0, ffDecimal, 2) & "s)" &
+                          (if theme.duration.len > 0: reset else: "")
           else:
-            durationStr = " " & gray & "(" & $ms.int & "ms)" & reset
+            durationStr = " " & theme.duration & "(" & $ms.int & "ms)" &
+                          (if theme.duration.len > 0: reset else: "")
           if extra.len > 1:
             displayExtra = newJObject()
             for key, val in extra:
               if key != "duration_ms":
                 displayExtra[key] = val
-          # else no extra to show
         else:
           displayExtra = extra
-      let name = j.getOrDefault("name").getStr("")
-      var output = gray & displayTs & reset & " " & color & "[" & paddedLevel & "]" & reset & " " & lightGray & "(" & filename & ":" & $lineNum & ")" & reset & " " & cyan & name & reset & ": " & message & durationStr
-      if not displayExtra.isNil and displayExtra.len > 0:
-        if opts.pretty:
-          for key, val in displayExtra:
-            output &= "\n  " & cyan & key & reset & ": " & $val
-        else:
-          output &= " " & lightGray & $displayExtra & reset
+      let output = renderLine(fmt, theme, pretty, displayTs, jLevel, filename,
+                              lineNum, name, message, durationStr, displayExtra)
       stdout.writeLine(output)
     except JsonParsingError:
       stdout.writeLine(line)

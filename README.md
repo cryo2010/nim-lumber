@@ -126,6 +126,27 @@ logger.info("login", user="alice")
 # extra.user is "alice", not "system"
 ```
 
+### Timing Blocks
+
+Measure the duration of a block and log it automatically with `duration_ms` in extra:
+
+```nim
+# Default: logs at INFO level
+logger.time("db query"):
+  db.exec("SELECT * FROM users")
+# {"message":"db query","extra":{"duration_ms":12.34}}
+
+# Custom level
+logger.time(LogLevel.DEBUG, "template render"):
+  renderPage()
+```
+
+The CLI prettifier displays duration inline after the message:
+
+```
+2026-07-03T15:00:00-07:00 PDT [INFO ] (app.nim:10) db: db query (12ms)
+```
+
 ### Any Type as an Argument
 
 Any type with a `$` operator can be passed. Objects are prefixed with their type name.
@@ -288,11 +309,17 @@ Levels are color-coded: TRACE (blue), DEBUG (light blue), INFO (white), WARN (ye
 ### Options
 
 ```
---level <level>     Minimum log level to display
---filter <expr>     Filter logs by field value (can be repeated)
---tz <timezone>     Timezone for timestamps (IANA name or abbreviation)
---help, -h          Show help
---version, -v       Show version
+--level <level>       Minimum log level to display
+--filter <expr>       Filter logs by field value (can be repeated)
+--tz <timezone>       Timezone for timestamps (IANA name or abbreviation)
+--format <template>   Output format template
+--time-format <fmt>   Timestamp format using strftime specifiers
+--pretty              Indent extra fields on separate lines
+--no-color            Disable colored output (also respects NO_COLOR env var)
+--config <path>       Path to config file
+--init                Create default config file at ~/.config/lumber/config.toml
+--help, -h            Show help
+--version, -v         Show version
 ```
 
 ### Level Filtering
@@ -350,6 +377,79 @@ The displayed timestamp includes the UTC offset and abbreviated timezone name fo
 ```
 
 Non-JSON lines pass through unchanged.
+
+### Output Format
+
+Customize the output layout with `--format`. Available placeholders: `{timestamp}`, `{level}`, `{filename}`, `{line}`, `{name}`, `{message}`, `{duration}`, `{extra}`.
+
+```sh
+# Minimal output
+myapp | lumber --format "{level} {message}"
+
+# Without filename/line
+myapp | lumber --format "{timestamp} [{level}] {name}: {message}{extra}"
+```
+
+### Timestamp Format
+
+Customize how timestamps are displayed with `--time-format` using strftime specifiers:
+
+```sh
+# Time only
+myapp | lumber --time-format "%H:%M:%S"
+
+# Short date
+myapp | lumber --time-format "%b %d %H:%M"
+```
+
+The default format is `%Y-%m-%dT%H:%M:%S`. The UTC offset and timezone abbreviation are always appended after the formatted time.
+
+### Configuration File
+
+Lumber looks for configuration in two places (later sources override earlier ones):
+
+1. **Global**: `~/.config/lumber/config.toml` (respects `$XDG_CONFIG_HOME`)
+2. **Project**: `.lumber.toml` in the current or any parent directory (walks up like `.git`)
+
+Generate a default config file with `--init`:
+
+```sh
+lumber --init
+```
+
+Example config:
+
+```toml
+[format]
+template = "{timestamp} [{level}] ({filename}:{line}) {name}: {message}{duration}{extra}"
+time_format = "%Y-%m-%dT%H:%M:%S"
+
+[colors]
+timestamp = "gray"
+filename = "light_gray"
+name = "cyan"
+message = ""
+duration = "gray"
+extra_key = "cyan"
+extra_value = ""
+
+[colors.level]
+trace = "blue"
+debug = "light_blue"
+info = "white"
+warn = "yellow"
+error = "red"
+fatal = "magenta"
+
+[options]
+pretty = false
+tz = "local"
+level = "trace"
+```
+
+Available colors: `black`, `blue`, `cyan`, `gray`, `green`, `light_blue`, `light_cyan`, `light_gray`, `light_green`, `light_magenta`, `light_red`, `light_yellow`, `magenta`, `red`, `white`, `yellow`.
+
+CLI flags always take precedence over config file values.
 
 ## Full Example
 
