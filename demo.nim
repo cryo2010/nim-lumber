@@ -7,8 +7,9 @@ type
     age: int
 
 outputs = @[
-  Stream(newAsyncStream(newFileStream(stdout))),
-  Stream(newSizeRotateStream("demo.log", maxBytes = 1_000_000, maxFiles = 3))
+  Output(stream: newAsyncStream(newFileStream(stdout))),
+  Output(stream: newRollingFileStream("demo.log", maxBytes = 1_000_000, maxFiles = 3)),
+  Output(stream: newFileStream("error.log", fmAppend), level: LogLevel.ERROR),
 ]
 var logger = newLogger(extra = %* {"service": "demo-api"})
 var admin = User(name: "Admin", age: 35)
@@ -28,5 +29,5 @@ var dbLogger = reqLogger.child(name = "db", extra = %* {"host": "db.local", "por
 dbLogger.error("Failed to connect to database")
 logger.fatal("Shutting down")
 
-for s in outputs:
-  s.close()
+for o in outputs:
+  o.stream.close()
