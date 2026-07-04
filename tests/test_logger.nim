@@ -84,6 +84,32 @@ test "middleware chain runs in order":
   logger.info("chained")
   clearMiddleware()
 
+test "extra accepts Nim objects":
+  type Context = object
+    requestId: string
+    userId: int
+  var logger = newLogger(name = "test", extra = Context(requestId: "req-1", userId: 7))
+  logger.info("object extra")
+
+test "child accepts Nim objects":
+  type Tags = object
+    env: string
+  var parent = newLogger(name = "test")
+  var child = parent.child(extra = Tags(env: "staging"))
+  child.info("child with object extra")
+
+test "structured message fields":
+  var logger = newLogger(name = "test")
+  logger.info("User logged in", user="alice", ip="10.0.0.1")
+
+test "structured fields override logger extra":
+  var logger = newLogger(name = "test", extra = %* {"user": "system"})
+  logger.info("login", user="alice")
+
+test "structured fields with no message args":
+  var logger = newLogger(name = "test")
+  logger.info("event", status=200, path="/api/health")
+
 test "compile-time no-op for lower levels":
   # This compiles and runs but produces no output when compiled with -d:lumberLevel=INFO
   var logger = newLogger(name = "test")
