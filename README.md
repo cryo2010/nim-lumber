@@ -13,7 +13,7 @@ A compile-time optimized JSON logger for Nim with a built-in CLI prettifier.
 - **Exception logging** - pass any `ref Exception` and lumber extracts the message, type, and stack trace automatically
 - **String interpolation** - `{0}`, `{1}` placeholders in messages are replaced with stringified arguments
 - **Type-aware object formatting** - object types are automatically prefixed with their type name (e.g. `User(name: "Dude", age: 40)`)
-- **Runtime level filtering** - per-logger level short-circuits before building records
+- **Runtime level filtering** - per-logger level short-circuits immediately
 - **Child loggers** - create derived loggers that inherit and extend the parent's context
 - **Extra fields** - attach structured metadata to loggers, merged into every log line under an `"extra"` key
 - **Thread-local context** - `withLogContext` attaches ambient fields to all loggers in the current call stack
