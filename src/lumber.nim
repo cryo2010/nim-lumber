@@ -654,6 +654,8 @@ when isMainModule:
       levelWarn: string
       levelError: string
       levelFatal: string
+      highlightLine: string
+      highlightMatch: string
 
   proc colorNameToAnsi(name: string): string =
     case name.toLowerAscii().replace("_", "")
@@ -676,6 +678,39 @@ when isMainModule:
     of "", "none": ""
     else: ""
 
+  proc bgColorNameToAnsi(name: string): string =
+    ## Maps color names to ANSI background escape codes.
+    case name.toLowerAscii().replace("_", "")
+    of "black": "\e[40m"
+    of "red": "\e[41m"
+    of "green": "\e[42m"
+    of "yellow": "\e[43m"
+    of "blue": "\e[44m"
+    of "magenta": "\e[45m"
+    of "cyan": "\e[46m"
+    of "white": "\e[107m"
+    of "gray", "grey": "\e[100m"
+    of "lightgray", "lightgrey": "\e[47m"
+    of "lightred", "brightred": "\e[101m"
+    of "lightgreen", "brightgreen": "\e[102m"
+    of "lightyellow", "brightyellow": "\e[103m"
+    of "lightblue", "brightblue": "\e[104m"
+    of "lightmagenta", "brightmagenta": "\e[105m"
+    of "lightcyan", "brightcyan": "\e[106m"
+    of "darkgray": "\e[48;5;236m"
+    of "darkergray": "\e[48;5;238m"
+    of "subtlegray": "\e[48;5;234m"
+    of "", "none": ""
+    else:
+      # Support 256-color codes like "238" directly
+      try:
+        let code = parseInt(name)
+        if code >= 0 and code <= 255:
+          return "\e[48;5;" & $code & "m"
+      except ValueError:
+        discard
+      ""
+
   proc defaultTheme(): Theme =
     Theme(
       timestamp: "\e[90m",
@@ -691,6 +726,8 @@ when isMainModule:
       levelWarn: "\e[33m",
       levelError: "\e[91m",
       levelFatal: "\e[35m",
+      highlightLine: "\e[48;5;236m",
+      highlightMatch: "\e[48;5;240m",
     )
 
   proc colorForLevel(theme: Theme, level: string): string =
@@ -783,6 +820,11 @@ when isMainModule:
     if ek.len > 0: theme.extraKey = colorNameToAnsi(ek)
     let ev = getToml(table, "colors.extra_value")
     if ev.len > 0: theme.extraValue = colorNameToAnsi(ev)
+    # Highlight colors (background)
+    let hl = getToml(table, "colors.highlight_line")
+    if hl.len > 0: theme.highlightLine = bgColorNameToAnsi(hl)
+    let hm = getToml(table, "colors.highlight_match")
+    if hm.len > 0: theme.highlightMatch = bgColorNameToAnsi(hm)
     # Level colors
     let lt = getToml(table, "colors.level.trace")
     if lt.len > 0: theme.levelTrace = colorNameToAnsi(lt)
@@ -820,6 +862,8 @@ when isMainModule:
     theme.levelWarn = ""
     theme.levelError = ""
     theme.levelFatal = ""
+    theme.highlightLine = ""
+    theme.highlightMatch = ""
 
   const defaultFormat = "{timestamp} [{level}] ({filename}:{line}) {name}: {message}{duration}{extra}"
 
@@ -842,17 +886,18 @@ lumber - JSON log prettifier
 Usage: <app> | lumber [options]
 
 Options:
-  --level <level>     Minimum log level to display (trace, debug, info, warn, error, fatal)
-  --filter <expr>     Filter logs by field value (can be repeated)
-  --tz <timezone>     Timezone for timestamps (IANA name or abbreviation like PST, EST, UTC)
-  --pretty            Show extra fields indented below the message
-  --format <template> Custom output format using {tokens}
-  --time-format <fmt> Timestamp format using strftime specifiers (default: %Y-%m-%dT%H:%M:%S)
-  --no-color          Disable colored output
-  --config <path>     Path to config file (default: ~/.config/lumber/config.toml)
-  --init              Create a default config file at ~/.config/lumber/config.toml
-  --help, -h          Show this help
-  --version, -v       Show version
+  --level <level>       Minimum log level to display (trace, debug, info, warn, error, fatal)
+  --filter <expr>       Filter logs by field value (can be repeated)
+  --highlight <regex>   Highlight lines matching regex (can be repeated, alias: --hl)
+  --tz <timezone>       Timezone for timestamps (IANA name or abbreviation like PST, EST, UTC)
+  --pretty              Show extra fields indented below the message
+  --format <template>   Custom output format using {tokens}
+  --time-format <fmt>   Timestamp format using strftime specifiers (default: %Y-%m-%dT%H:%M:%S)
+  --no-color            Disable colored output
+  --config <path>       Path to config file (default: ~/.config/lumber/config.toml)
+  --init                Create a default config file at ~/.config/lumber/config.toml
+  --help, -h            Show this help
+  --version, -v         Show version
 
 Format tokens:
   {timestamp}         Timestamp with offset and timezone abbreviation
@@ -882,6 +927,8 @@ Examples:
   myapp | lumber --filter userId=1234
   myapp | lumber --filter "latency>500" --filter "path~^/api"
   myapp | lumber --filter "timestamp>2026-07-03T12:00:00Z"
+  myapp | lumber --highlight "req-7f3a"
+  myapp | lumber --hl "error|timeout"
   myapp | lumber --format "{timestamp} [{level}] {name}: {message}"
   myapp | lumber --tz PST"""
 
@@ -899,6 +946,7 @@ Examples:
       level: LogLevel
       tz: string
       filters: seq[Filter]
+      highlights: seq[Regex]
       pretty: bool
       format: string
       timeFormat: string
@@ -1011,6 +1059,8 @@ Examples:
 # duration = "gray"
 # extra_key = "cyan"
 # extra_value = ""
+# highlight_line = "236"
+# highlight_match = "240"
 
 [colors.level]
 # trace = "blue"
@@ -1049,8 +1099,8 @@ Examples:
 
   proc parseArgs(): CliOptions =
     result = CliOptions(level: LogLevel.TRACE, tz: "local", filters: @[],
-                        pretty: false, format: "", timeFormat: "",
-                        noColor: false, configPath: "")
+                        highlights: @[], pretty: false, format: "",
+                        timeFormat: "", noColor: false, configPath: "")
     var p = initOptParser()
     while true:
       p.next()
@@ -1083,6 +1133,12 @@ Examples:
             stderr.writeLine("lumber: --filter requires a value")
             quit(1)
           result.filters.add(parseFilter(val))
+        of "highlight", "hl":
+          let val = getOptVal(p)
+          if val.len == 0:
+            stderr.writeLine("lumber: --highlight requires a value")
+            quit(1)
+          result.highlights.add(re(val, {reIgnoreCase}))
         of "tz":
           let val = getOptVal(p)
           if val.len == 0:
@@ -1326,6 +1382,51 @@ Examples:
         result &= fmt[i]
         inc i
 
+  proc collectValues(j: JsonNode): seq[string] =
+    ## Collect all string representations of field values for highlight matching.
+    for key, val in j:
+      case val.kind
+      of JString: result.add(val.getStr())
+      of JInt: result.add($val.getInt())
+      of JFloat: result.add($val.getFloat())
+      of JBool: result.add($val.getBool())
+      of JObject:
+        for subVals in collectValues(val):
+          result.add(subVals)
+      of JArray:
+        for elem in val.elems:
+          if elem.kind == JString: result.add(elem.getStr())
+      of JNull: discard
+
+  proc highlightMatches(output: string, highlights: seq[Regex],
+                        theme: Theme, reset: string): string =
+    ## Apply match-level background highlighting to matched text in the output.
+    ## Operates on the rendered string, replacing matched substrings with
+    ## highlighted versions.
+    result = output
+    for hl in highlights:
+      var newResult = ""
+      var pos = 0
+      while pos < result.len:
+        # Skip ANSI escape sequences
+        if result[pos] == '\e':
+          let mIdx = result.find('m', pos)
+          if mIdx >= 0:
+            newResult &= result[pos .. mIdx]
+            pos = mIdx + 1
+            continue
+        let (first, last) = findBounds(result, hl, pos)
+        if first < 0:
+          newResult &= result[pos .. ^1]
+          break
+        # Add text before match
+        if first > pos:
+          newResult &= result[pos ..< first]
+        # Add highlighted match
+        newResult &= theme.highlightMatch & result[first .. last] & reset & theme.highlightLine
+        pos = last + 1
+      result = newResult
+
   var line: string
   while stdin.readLine(line):
     try:
@@ -1360,8 +1461,22 @@ Examples:
                 displayExtra[key] = val
         else:
           displayExtra = extra
-      let output = renderLine(fmt, theme, pretty, displayTs, jLevel, filename,
+      var output = renderLine(fmt, theme, pretty, displayTs, jLevel, filename,
                               lineNum, name, message, durationStr, displayExtra)
+      # Apply highlighting if any pattern matches any field value
+      if opts.highlights.len > 0:
+        let values = collectValues(j)
+        var matched = false
+        for val in values:
+          for hl in opts.highlights:
+            if val.contains(hl):
+              matched = true
+              break
+          if matched: break
+        if matched:
+          # Replace all resets with reset+bg so background persists across tokens
+          output = output.replace(reset, reset & theme.highlightLine)
+          output = theme.highlightLine & highlightMatches(output, opts.highlights, theme, reset) & "\e[K" & reset
       stdout.writeLine(output)
     except JsonParsingError:
       stdout.writeLine(line)

@@ -438,6 +438,7 @@ Levels are color-coded: TRACE (blue), DEBUG (light blue), INFO (white), WARN (ye
 ```
 --level <level>       Minimum log level to display
 --filter <expr>       Filter logs by field value (can be repeated)
+--highlight <regex>   Highlight lines matching regex (can be repeated, alias: --hl)
 --tz <timezone>       Timezone for timestamps (IANA name or abbreviation)
 --format <template>   Output format template
 --time-format <fmt>   Timestamp format using strftime specifiers
@@ -484,6 +485,23 @@ myapp | lumber --filter "timestamp>2026-07-03T15:00:00-07:00"
 # Combine multiple filters
 myapp | lumber --filter userId=1234 --filter "latency>500"
 ```
+
+### Highlighting
+
+Highlight lines where any field value matches a regex. Unlike `--filter`, non-matching lines are still shown — matching lines get a background tint, and the matched text itself gets a brighter highlight. Matching is case-insensitive.
+
+```sh
+# Highlight a request ID across interleaved logs
+myapp | lumber --highlight "req-7f3a"
+
+# Short alias
+myapp | lumber --hl "timeout|refused"
+
+# Multiple patterns
+myapp | lumber --hl "alice" --hl "error"
+```
+
+The background extends to the terminal's right edge. Highlight colors are configurable in the config file via `colors.highlight_line` (whole line background) and `colors.highlight_match` (matched text background). Both accept 256-color codes or named colors.
 
 ### Timezone Support
 
@@ -559,6 +577,8 @@ message = ""
 duration = "gray"
 extra_key = "cyan"
 extra_value = ""
+highlight_line = "236"
+highlight_match = "240"
 
 [colors.level]
 trace = "blue"
@@ -574,7 +594,7 @@ tz = "local"
 level = "trace"
 ```
 
-Available colors: `black`, `blue`, `cyan`, `gray`, `green`, `light_blue`, `light_cyan`, `light_gray`, `light_green`, `light_magenta`, `light_red`, `light_yellow`, `magenta`, `red`, `white`, `yellow`.
+Available colors: `black`, `blue`, `cyan`, `gray`, `green`, `light_blue`, `light_cyan`, `light_gray`, `light_green`, `light_magenta`, `light_red`, `light_yellow`, `magenta`, `red`, `white`, `yellow`. Highlight colors also accept 256-color codes (e.g. `"236"`, `"240"`).
 
 CLI flags always take precedence over config file values.
 
