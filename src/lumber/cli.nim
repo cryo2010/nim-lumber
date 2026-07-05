@@ -259,7 +259,7 @@ Options:
   --pretty              Show extra fields indented below the message
   --format <template>   Custom output format using {tokens}
   --time-format <fmt>   Timestamp format using strftime specifiers (default: %Y-%m-%dT%H:%M:%S)
-  --no-color            Disable colored output
+  --no-color            Disable colored output (also respects NO_COLOR and CI env vars)
   --config <path>       Path to config file (default: ~/.config/lumber/config.toml)
   --init                Create a default config file at ~/.config/lumber/config.toml
   --help, -h            Show this help
@@ -794,7 +794,7 @@ when isMainModule:
   if opts.level != LogLevel.TRACE: level = opts.level
   if opts.format.len > 0: fmt = opts.format
   if opts.timeFormat.len > 0: timeFmt = opts.timeFormat
-  if opts.noColor or getEnv("NO_COLOR").len > 0:
+  if opts.noColor or getEnv("NO_COLOR").len > 0 or getEnv("CI").len > 0:
     stripAnsi(theme)
     reset = ""
 
