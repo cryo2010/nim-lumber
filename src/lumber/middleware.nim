@@ -14,7 +14,10 @@ proc newRateLimiter*(window: float = 1.0, maxBurst: int = 5): LogMiddleware =
   ## Creates middleware that limits log output per source location.
   ## Within each `window` (seconds), only the first `maxBurst` messages
   ## from the same file:line are emitted. Resets after the window expires.
+  ## When messages were suppressed, the next emitted message from that
+  ## source includes a `suppressed` field with the count of dropped messages.
   var counts = initTable[string, int]()
+  var dropped = initTable[string, int]()
   var lastReset = epochTime()
   result = proc(record: var LogRecord): bool =
     let now = epochTime()
@@ -24,7 +27,17 @@ proc newRateLimiter*(window: float = 1.0, maxBurst: int = 5): LogMiddleware =
     let key = record.filename & ":" & $record.line
     let count = counts.getOrDefault(key, 0) + 1
     counts[key] = count
-    count <= maxBurst
+    if count <= maxBurst:
+      let suppressed = dropped.getOrDefault(key, 0)
+      if suppressed > 0:
+        if record.extra.isNil:
+          record.extra = newJObject()
+        record.extra["suppressed"] = %suppressed
+        dropped.del(key)
+      return true
+    else:
+      dropped[key] = dropped.getOrDefault(key, 0) + 1
+      return false
 
 proc newSampler*(rate: int = 10): LogMiddleware =
   ## Creates middleware that logs 1 in every `rate` messages.

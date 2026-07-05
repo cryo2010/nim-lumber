@@ -10,7 +10,6 @@ A compile-time optimized JSON logger for Nim with a built-in CLI prettifier.
 - **Thread-safe** - safe for concurrent use from multiple threads
 - **Compile-time level filtering** - log calls below the threshold are eliminated from the binary entirely, with zero runtime cost
 - **Structured JSON output** - every log line is valid JSON with timestamp, level, name, filename, line number, and message
-- **Millisecond timestamps** - ISO 8601 with `.NNN` precision
 - **Structured messages** - named `key=value` arguments become discrete JSON fields, queryable by log aggregators
 - **Exception logging** - pass any `ref Exception` and lumber extracts the message, type, and stack trace automatically
 - **String interpolation** - `{0}`, `{1}` placeholders in messages are replaced with stringified arguments

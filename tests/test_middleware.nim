@@ -52,6 +52,24 @@ test "rate limiter resets after window":
     logger.info("msg")
   check captured.len == 2
 
+test "rate limiter reports suppressed count":
+  setupTest()
+  use newRateLimiter(window = 0.05, maxBurst = 2)
+  var logger = newLogger(name = "test")
+  # Single loop: first 5 iterations emit (2 pass, 3 suppressed),
+  # then sleep, then 3 more from the same source line
+  var slept = false
+  for i in 0 ..< 8:
+    if i == 5 and not slept:
+      sleep(100)
+      captured.setLen(0)
+      slept = true
+    logger.info("msg")
+  # After reset: 2 pass (maxBurst), first one carries suppressed=3
+  check captured.len == 2
+  let j = parseJson(captured[0])
+  check j["extra"]["suppressed"].getInt() == 3
+
 test "sampler logs 1 in N":
   setupTest()
   use newSampler(rate = 5)
