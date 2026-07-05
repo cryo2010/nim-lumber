@@ -1,5 +1,5 @@
 import unittest
-import std/[streams, os]
+import std/[streams, os, json, strutils, re]
 import lumber
 import lumber/middleware
 
@@ -89,3 +89,54 @@ test "level sampler combines both behaviors":
     logger.error("always")
   # INFO: 2 sampled (1, 11), ERROR: 5 always
   check captured.len == 7
+
+test "redactor replaces specified keys":
+  setupTest()
+  use newRedactor(@["password", "token"])
+  var logger = newLogger(name = "test")
+  logger.info("login", password="secret123", token="abc-xyz", user="alice")
+  check captured.len == 1
+  let j = parseJson(captured[0])
+  check j["extra"]["password"].getStr() == "[REDACTED]"
+  check j["extra"]["token"].getStr() == "[REDACTED]"
+  check j["extra"]["user"].getStr() == "alice"
+
+test "redactor ignores missing keys":
+  setupTest()
+  use newRedactor(@["password"])
+  var logger = newLogger(name = "test")
+  logger.info("no password here", user="alice")
+  check captured.len == 1
+  let j = parseJson(captured[0])
+  check j["extra"]["user"].getStr() == "alice"
+  check not j["extra"].hasKey("password")
+
+test "redactor uses custom placeholder":
+  setupTest()
+  use newRedactor(@["ssn"], placeholder = "***")
+  var logger = newLogger(name = "test")
+  logger.info("record", ssn="123-45-6789")
+  let j = parseJson(captured[0])
+  check j["extra"]["ssn"].getStr() == "***"
+
+test "pattern redactor scrubs matching values":
+  setupTest()
+  use newPatternRedactor(re"\d{4}-\d{4}-\d{4}-\d{4}")
+  var logger = newLogger(name = "test")
+  logger.info("Payment with card 4111-1111-1111-1111 processed", cardNum="4111-1111-1111-1111")
+  check captured.len == 1
+  let j = parseJson(captured[0])
+  let msg = j["message"].getStr()
+  check strutils.find(msg, "4111") == -1
+  check strutils.find(msg, "[REDACTED]") >= 0
+  check j["extra"]["cardNum"].getStr() == "[REDACTED]"
+
+test "pattern redactor leaves non-matching values intact":
+  setupTest()
+  use newPatternRedactor(re"\d{4}-\d{4}-\d{4}-\d{4}")
+  var logger = newLogger(name = "test")
+  logger.info("Hello world", user="alice")
+  check captured.len == 1
+  let j = parseJson(captured[0])
+  check j["message"].getStr() == "Hello world"
+  check j["extra"]["user"].getStr() == "alice"

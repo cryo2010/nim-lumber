@@ -7,7 +7,7 @@
 ##   use newRateLimiter(window = 1.0, maxBurst = 10)
 ##   use newSampler(rate = 100)  # log 1 in 100
 
-import std/[tables, times, strutils]
+import std/[tables, times, strutils, json, re]
 import ../lumber
 
 proc newRateLimiter*(window: float = 1.0, maxBurst: int = 5): LogMiddleware =
@@ -46,3 +46,40 @@ proc newLevelSampler*(level: LogLevel, rate: int = 10): LogMiddleware =
       return true
     counter.inc()
     counter mod rate == 1
+
+const defaultRedactKeys* = @[
+  "api_key", "api_secret", "apiKey", "apiSecret",
+  "authorization", "card_number", "cardNumber",
+  "cookie", "credit_card", "creditCard", "cvv",
+  "passwd", "password", "pin", "secret", "ssn", "token",
+]
+
+proc newRedactor*(keys: seq[string] = @[], placeholder: string = "[REDACTED]"): LogMiddleware =
+  ## Creates middleware that replaces the values of specified extra field keys
+  ## with a placeholder string. Useful for removing sensitive data like passwords,
+  ## tokens, or PII from log output.
+  ##
+  ## If `keys` is empty, uses a built-in default list of common sensitive field
+  ## names (password, token, apiKey, ssn, creditCard, etc.).
+  ## If `keys` is provided, it completely overrides the defaults.
+  let redactKeys = if keys.len > 0: keys else: defaultRedactKeys
+  result = proc(record: var LogRecord): bool =
+    if not record.extra.isNil and record.extra.kind == JObject:
+      for key in redactKeys:
+        if record.extra.hasKey(key):
+          record.extra[key] = %placeholder
+    true
+
+proc newPatternRedactor*(pattern: Regex, placeholder: string = "[REDACTED]"): LogMiddleware =
+  ## Creates middleware that scans all string values in extra fields and the
+  ## message, replacing any match of `pattern` with the placeholder.
+  ## Useful for redacting credit card numbers, API keys, emails, etc.
+  result = proc(record: var LogRecord): bool =
+    record.message = record.message.replacef(pattern, placeholder)
+    if not record.extra.isNil and record.extra.kind == JObject:
+      for key, val in record.extra.pairs:
+        if val.kind == JString:
+          let replaced = val.getStr().replacef(pattern, placeholder)
+          if replaced != val.getStr():
+            record.extra[key] = %replaced
+    true

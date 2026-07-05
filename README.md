@@ -18,7 +18,7 @@ A compile-time optimized JSON logger for Nim with a built-in CLI prettifier.
 - **Extra fields** - attach structured metadata to loggers, merged into every log line under an `"extra"` key
 - **Thread-local context** - `withLogContext` attaches ambient fields to all loggers in the current call stack
 - **Middleware** - a chain of functions that can enrich, transform, or suppress log records at runtime
-- **Built-in middleware** - rate limiter, sampler, and level-aware sampler for production use
+- **Built-in middleware** - rate limiter, sampler, level-aware sampler, and redaction for production use
 - **Multiple output streams** - write to stdout, files, or any custom `Stream` simultaneously
 - **Rotating file streams** - built-in size-based and time-based file rotation
 - **Buffered streams** - hybrid flush strategy (size, interval, and level threshold) for high throughput
@@ -309,6 +309,7 @@ Import `lumber/middleware` for ready-made middleware:
 ```nim
 import lumber
 import lumber/middleware
+import std/re
 
 # Rate limiter: allow max 5 messages per second from the same source location
 use newRateLimiter(window = 1.0, maxBurst = 5)
@@ -318,7 +319,21 @@ use newSampler(rate = 100)
 
 # Level sampler: sample DEBUG/TRACE at 1-in-50, always pass WARN+
 use newLevelSampler(level = LogLevel.DEBUG, rate = 50)
+
+# Redact sensitive fields using built-in defaults
+use newRedactor()
+
+# Override with a custom key list (replaces defaults entirely)
+use newRedactor(@["password", "token", "ssn"])
+
+# Redact values matching a regex pattern (e.g. credit card numbers)
+use newPatternRedactor(re"\d{4}-\d{4}-\d{4}-\d{4}")
+
+# Custom placeholder
+use newRedactor(@["apiKey"], placeholder = "***")
 ```
+
+Default redacted keys: `api_key`, `api_secret`, `apiKey`, `apiSecret`, `authorization`, `card_number`, `cardNumber`, `cookie`, `credit_card`, `creditCard`, `cvv`, `passwd`, `password`, `pin`, `secret`, `ssn`, `token`.
 
 ### Outputs and Routing
 
