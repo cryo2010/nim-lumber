@@ -110,6 +110,8 @@ proc colorForLevel(theme: Theme, level: string): string =
 
 # -- Minimal TOML parser --
 
+const configVersion = 1
+
 type TomlTable = seq[(string, string)]  # flat list of "section.key" -> "value"
 
 proc parseToml(content: string): TomlTable =
@@ -168,6 +170,11 @@ proc loadConfig(path: string, theme: var Theme, fmt: var string,
     return
   let content = readFile(path)
   let table = parseToml(content)
+  # Version check
+  let ver = getToml(table, "version")
+  if ver.len > 0 and ver != $configVersion:
+    stderr.writeLine "lumber: config version " & ver & " is not supported (expected " & $configVersion & ")"
+    quit(1)
   # Format
   let tmpl = getToml(table, "format.template")
   if tmpl.len > 0: fmt = tmpl
@@ -412,6 +419,7 @@ proc matchesAllFilters(j: JsonNode, filters: seq[Filter]): bool =
 
 const defaultConfigContent = """# lumber CLI prettifier configuration
 # Place this file at ~/.config/lumber/config.toml
+version = 1
 
 [format]
 # template = "{timestamp} [{level}] ({filename}:{line}) {name}: {message}{duration}{extra}"
