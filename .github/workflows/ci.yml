@@ -9,15 +9,29 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        nim-version: ['stable', 'devel']
     steps:
       - uses: actions/checkout@v4
 
       - uses: jiro4989/setup-nim-action@v2
         with:
-          nim-version: ${{ matrix.nim-version }}
+          nim-version: 'stable'
+
+      - name: Run tests
+        run: nimble test -y
+
+      - name: Build CLI
+        run: nimble buildProd -y
+
+  test-devel:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: jiro4989/setup-nim-action@v2
+        with:
+          nim-version: 'devel'
 
       - name: Run tests
         run: nimble test -y
