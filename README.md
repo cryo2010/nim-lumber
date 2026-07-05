@@ -4,6 +4,8 @@
 
 A compile-time optimized JSON logger for Nim with a built-in CLI prettifier.
 
+<img src="docs/screenshot.png" alt="lumber CLI output" width="100%">
+
 ## Features
 
 - **Zero dependencies** - only uses the Nim standard library
@@ -17,7 +19,7 @@ A compile-time optimized JSON logger for Nim with a built-in CLI prettifier.
 - **Runtime level filtering** - per-logger level short-circuits immediately
 - **Child loggers** - create derived loggers that inherit and extend the parent's context
 - **Extra fields** - attach structured metadata to loggers, merged into every log line under an `"extra"` key
-- **Thread-local context** - `withLogContext` attaches ambient fields to all loggers in the current call stack
+- **Thread-local context** - `withContext` attaches ambient fields to all loggers in the current call stack
 - **Middleware** - a chain of functions that can enrich, transform, or suppress log records at runtime
 - **Built-in middleware** - rate limiter, sampler, level-aware sampler, and redaction for production use
 - **Multiple output streams** - write to stdout, files, or any custom `Stream` simultaneously
@@ -41,6 +43,8 @@ import lumber
 var logger = newLogger()
 logger.info("Hello, world!")
 ```
+
+> **Tip:** If you prefer namespaced access (`lumber.outputs`, `lumber.use`, etc.), use `from lumber import nil`. All examples below use plain `import lumber` for brevity.
 
 Output:
 
@@ -248,19 +252,19 @@ var dbLogger = reqLogger.child(name = "db", extra = DbContext(host: "db.local", 
 
 ### Thread-Local Context
 
-Use `withLogContext` to attach ambient fields that any logger on the current thread will pick up — without passing the logger through function calls.
+Use `withContext` to attach ambient fields that any logger on the current thread will pick up — without passing the logger through function calls.
 
 ```nim
 var logger = newLogger(name = "api")
 
-withLogContext(%* {"requestId": "abc-123", "userId": 42}):
+withContext(%* {"requestId": "abc-123", "userId": 42}):
   logger.info("handling request")
   # extra: {"requestId": "abc-123", "userId": 42}
 
   processOrder(order)  # any logger inside also sees requestId/userId
 
   # Nesting adds fields, restores on exit
-  withLogContext(%* {"orderId": "ord-789"}):
+  withContext(%* {"orderId": "ord-789"}):
     logger.info("processing payment")
     # extra: {"requestId": "abc-123", "userId": 42, "orderId": "ord-789"}
 
@@ -314,7 +318,15 @@ import std/re
 
 # Rate limiter: allow max 5 messages per second from the same source location
 use newRateLimiter(window = 1.0, maxBurst = 5)
+```
 
+When messages are suppressed, the next emitted message from that source location includes a `suppressed` field with the count of dropped messages:
+
+```json
+{"level":"INFO","message":"Event 11","extra":{"suppressed":7}}
+```
+
+```nim
 # Sampler: log 1 in every 100 messages
 use newSampler(rate = 100)
 
@@ -581,6 +593,8 @@ lumber --init
 Example config:
 
 ```toml
+version = 1
+
 [format]
 template = "{timestamp} [{level}] ({filename}:{line}) {name}: {message}{duration}{extra}"
 time_format = "%Y-%m-%dT%H:%M:%S"
