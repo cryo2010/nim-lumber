@@ -4,6 +4,8 @@
 
 A compile-time optimized JSON logger for Nim with a built-in CLI prettifier.
 
+<img src="docs/screenshot.png" alt="lumber CLI output" width="100%">
+
 ## Features
 
 - **Zero dependencies** - only uses the Nim standard library
