@@ -316,7 +316,15 @@ import std/re
 
 # Rate limiter: allow max 5 messages per second from the same source location
 use newRateLimiter(window = 1.0, maxBurst = 5)
+```
 
+When messages are suppressed, the next emitted message from that source location includes a `suppressed` field with the count of dropped messages:
+
+```json
+{"level":"INFO","message":"Event 11","extra":{"suppressed":7}}
+```
+
+```nim
 # Sampler: log 1 in every 100 messages
 use newSampler(rate = 100)
 
@@ -583,6 +591,8 @@ lumber --init
 Example config:
 
 ```toml
+version = 1
+
 [format]
 template = "{timestamp} [{level}] ({filename}:{line}) {name}: {message}{duration}{extra}"
 time_format = "%Y-%m-%dT%H:%M:%S"
