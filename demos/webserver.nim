@@ -1,0 +1,36 @@
+import std/[asynchttpserver, asyncdispatch, json, random, strutils]
+import ../src/lumber
+
+randomize()
+
+var logger = newLogger(name = "server")
+
+const users = ["alice", "bob", "charlie", "dana", "eve"]
+
+proc handler(req: Request) {.async, gcsafe.} =
+  {.cast(gcsafe).}:
+    let user = users[rand(users.high)]
+    let reqId = "req-" & toHex(rand(0xFFFF), 4).toLowerAscii()
+
+    withContext(%* {"requestId": reqId, "method": $req.reqMethod, "path": req.url.path}):
+      logger.info("{0} logged in", user, userId=user, ip="127.0.0.1")
+
+      # Simulate occasional slow requests
+      if rand(10) == 0:
+        logger.warn("Slow response", latency=rand(200..500))
+
+      await req.respond(Http200, """{"status":"ok","user":"""" & user & """"}""",
+        newHttpHeaders([("Content-Type", "application/json")]))
+
+proc main() {.async.} =
+  var server = newAsyncHttpServer()
+  logger.info("Listening on port {0}", 8080)
+  server.listen(Port(8080))
+  while true:
+    if server.shouldAcceptRequest():
+      await server.acceptRequest(handler)
+    else:
+      await sleepAsync(500)
+
+asyncCheck main()
+runForever()

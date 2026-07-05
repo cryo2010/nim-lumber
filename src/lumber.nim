@@ -34,7 +34,7 @@ type
 
 var middleware*: seq[LogMiddleware] = @[]
 var outputs*: seq[Output] = @[Output(stream: newFileStream(stdout))]
-var logContext* {.threadvar.}: JsonNode
+var context* {.threadvar.}: JsonNode
 var writeLock*: Lock
 
 initLock(writeLock)
@@ -45,7 +45,7 @@ proc use*(mw: LogMiddleware) =
 proc clearMiddleware*() =
   middleware.setLen(0)
 
-proc flushAll*() =
+proc flush*() =
   ## Flush all output streams. Call this before exiting to ensure
   ## buffered log data is written.
   for o in outputs:
@@ -66,7 +66,7 @@ proc shutdown*() =
 when defined(posix):
   import std/posix
 
-addExitProc(proc() = flushAll())
+addExitProc(proc() = flush())
 
 proc flushOnExit*() =
   ## Register SIGTERM/SIGINT signal handlers that flush all outputs
@@ -83,18 +83,18 @@ proc flushOnExit*() =
       quit(143)
     discard posix.signal(SIGTERM, handleTerm)
 
-template withLogContext*(fields: JsonNode, body: untyped) =
-  let prev = logContext
+template withContext*(fields: JsonNode, body: untyped) =
+  let prev = context
   if prev.isNil:
-    logContext = fields
+    context = fields
   else:
-    logContext = prev.copy()
+    context = prev.copy()
     for key, val in fields:
-      logContext[key] = val
+      context[key] = val
   try:
     body
   finally:
-    logContext = prev
+    context = prev
 
 # -- Rotating file streams --
 
@@ -402,10 +402,10 @@ proc writeLog*(logger: Logger, level: LogLevel, filename: string, line: int,
   if level < logger.level:
     return
   var extra: JsonNode
-  let hasContext = not logContext.isNil
+  let hasContext = not context.isNil
   let hasLoggerExtra = not logger.extra.isNil
   let hasFields = not fields.isNil and fields.kind == JObject and fields.len > 0
-  # Merge order: logContext (lowest) → logger.extra → fields (highest)
+  # Merge order: context (lowest) → logger.extra → fields (highest)
   # Fast path: no merging needed
   if not hasContext and not hasFields:
     extra = logger.extra  # nil or existing ref, no copy
@@ -414,7 +414,7 @@ proc writeLog*(logger: Logger, level: LogLevel, filename: string, line: int,
   else:
     # Need to merge — copy the base and overlay
     if hasContext:
-      extra = logContext.copy()
+      extra = context.copy()
     else:
       extra = newJObject()
     if hasLoggerExtra:
