@@ -500,6 +500,10 @@ proc addExceptionFields*(fields: JsonNode, e: ref Exception) =
     for key, val in obj:
       fields[key] = val
 
+proc logArgSimple*[T](args: var seq[string], val: T) =
+  ## Fast path: just convert to string, no fields object needed.
+  args.add(toLogStr(val))
+
 proc logArg*[T](args: var seq[string], fields: JsonNode, val: T) =
   ## Compile-time dispatch: exceptions get their fields extracted,
   ## everything else becomes a format string argument.
@@ -544,24 +548,39 @@ proc genLogCall(level: LogLevel, logger: NimNode, args: NimNode): NimNode =
   let levelLit = newLit(level)
   let filename = newLit(info.filename.relativePath(getProjectPath()))
   let line = newLit(info.line)
-  # Always generate fields + seq-based message building to support exception detection
   let fieldsVar = genSym(nskVar, "fields")
   let argsVar = genSym(nskVar, "args")
   let stmts = newStmtList()
-  stmts.add(newVarStmt(fieldsVar, newCall(ident"newJObject")))
+  let needsFields = namedArgs.len > 0 or positionalArgs.len > 1
+  if needsFields:
+    stmts.add(newVarStmt(fieldsVar, newCall(ident"newJObject")))
   stmts.add(newVarStmt(argsVar, newNimNode(nnkCall).add(
     newNimNode(nnkBracketExpr).add(bindSym"newSeqOfCap", ident"string"),
     newLit(positionalArgs.len)
   )))
-  for arg in positionalArgs:
-    stmts.add(newCall(bindSym"logArg", argsVar, fieldsVar, arg))
-  for (key, val) in namedArgs:
-    stmts.add(
-      newCall(bindSym"logKwarg", fieldsVar, newLit(key), val)
-    )
+  if needsFields:
+    for arg in positionalArgs:
+      stmts.add(newCall(bindSym"logArg", argsVar, fieldsVar, arg))
+    for (key, val) in namedArgs:
+      stmts.add(
+        newCall(bindSym"logKwarg", fieldsVar, newLit(key), val)
+      )
+  else:
+    for arg in positionalArgs:
+      stmts.add(newCall(bindSym"logArgSimple", argsVar, arg))
   let msgCall = newCall(bindSym"buildMessageFromSeq", argsVar)
-  # If no named args, only pass fields when they have entries (exception was found)
-  let writeCall = newCall(bindSym"writeLog", logger, levelLit, filename, line, msgCall, fieldsVar)
+  let fieldsNode = if needsFields:
+    # Pass nil when object is empty (no exception was found at runtime)
+    newNimNode(nnkIfExpr).add(
+      newNimNode(nnkElifExpr).add(
+        newNimNode(nnkInfix).add(ident">", newCall(ident"len", fieldsVar), newLit(0)),
+        fieldsVar
+      ),
+      newNimNode(nnkElseExpr).add(newNilLit())
+    )
+  else:
+    newNilLit()
+  let writeCall = newCall(bindSym"writeLog", logger, levelLit, filename, line, msgCall, fieldsNode)
   stmts.add(writeCall)
   result = stmts
 
