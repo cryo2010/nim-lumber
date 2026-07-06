@@ -8,7 +8,7 @@ A compile-time optimized JSON logger for Nim with a built-in CLI prettifier.
 
 ## Features
 
-- **Zero dependencies** - only uses the Nim standard library
+- **Minimal dependencies** - the Nim standard library plus a single pure-Nim package ([regex](https://github.com/nitely/nim-regex)), compiled in statically; no C libraries or runtime dependencies
 - **Thread-safe** - safe for concurrent use from multiple threads
 - **Compile-time level filtering** - log calls below the threshold are eliminated from the binary entirely, with zero runtime cost
 - **Structured JSON output** - every log line is valid JSON with timestamp, level, name, filename, line number, and message
