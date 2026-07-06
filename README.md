@@ -1,6 +1,7 @@
 # lumber
 
 [![CI](https://github.com/cryo2010/nim-lumber/actions/workflows/ci.yml/badge.svg)](https://github.com/cryo2010/nim-lumber/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 A compile-time optimized JSON logger for Nim with a built-in CLI prettifier.
 
