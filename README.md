@@ -9,25 +9,15 @@ A compile-time optimized JSON logger for Nim with a built-in CLI prettifier.
 
 ## Features
 
-- **Minimal dependencies** - the Nim standard library plus a single pure-Nim package ([regex](https://github.com/nitely/nim-regex)), compiled in statically; no C libraries or runtime dependencies
-- **Thread-safe** - safe for concurrent use from multiple threads
-- **Compile-time level filtering** - log calls below the threshold are eliminated from the binary entirely, with zero runtime cost
+- **Compile-time level filtering** - log calls below the threshold are eliminated from the binary entirely, with zero runtime cost; per-logger runtime levels handle the rest
 - **Structured JSON output** - every log line is valid JSON with timestamp, level, name, filename, line number, and message
-- **Structured messages** - named `key=value` arguments become discrete JSON fields, queryable by log aggregators
+- **Structured messages** - named `key=value` arguments become discrete JSON fields, queryable by log aggregators; `{0}`-style placeholders interpolate positional arguments
 - **Exception logging** - pass any `ref Exception` and lumber extracts the message, type, and stack trace automatically
-- **String interpolation** - `{0}`, `{1}` placeholders in messages are replaced with stringified arguments
-- **Type-aware object formatting** - object types are automatically prefixed with their type name (e.g. `User(name: "Dude", age: 40)`)
-- **Runtime level filtering** - per-logger level short-circuits immediately
-- **Child loggers** - create derived loggers that inherit and extend the parent's context
-- **Extra fields** - attach structured metadata to loggers, merged into every log line under an `"extra"` key
-- **Thread-local context** - `withContext` attaches ambient fields to all loggers in the current call stack
-- **Middleware** - a chain of functions that can enrich, transform, or suppress log records at runtime
-- **Built-in middleware** - rate limiter, sampler, level-aware sampler, and redaction for production use
-- **Multiple output streams** - write to stdout, files, or any custom `Stream` simultaneously
-- **Rotating file streams** - built-in size-based and time-based file rotation
-- **Buffered streams** - hybrid flush strategy (size, interval, and level threshold) for high throughput
-- **Async stream wrapper** - non-blocking I/O via a background writer thread
-- **Graceful shutdown** - automatic flush on exit, opt-in signal handling for SIGTERM/SIGINT
+- **Contextual logging** - attach fields per logger, inherit them through child loggers, or scope them to a call stack with thread-local `withContext`
+- **Middleware** - enrich, transform, or suppress log records at runtime; rate limiter, sampler, and redaction included
+- **Flexible outputs** - write to stdout, files, or any custom `Stream` simultaneously, with built-in size/time rotation, buffering, a background-thread async writer, and automatic flush on exit
+- **Thread-safe** - safe for concurrent use from multiple threads
+- **Minimal dependencies** - the Nim standard library plus a single pure-Nim package ([regex](https://github.com/nitely/nim-regex)), compiled in statically; no C libraries or runtime dependencies
 - **CLI prettifier** - pipe JSON logs through the `lumber` binary for colored, human-readable output with level filtering, field filtering, timezone support, and customizable format/colors via TOML config
 
 ## Installation
