@@ -37,13 +37,13 @@ logger.info("Hello, world!")
 
 > **Tip:** If you prefer namespaced access (`lumber.outputs`, `lumber.use`, etc.), use `from lumber import nil`. All examples below use plain `import lumber` for brevity.
 
-### Output:
+#### Output:
 
 ```json
 {"timestamp":"2026-07-06T20:44:45.742Z","level":"INFO","name":"mymodule","filename":"mymodule.nim","line":4,"message":"Hello, world!"}
 ```
 
-### Piped through the `lumber` CLI prettifier:
+#### Piped through the `lumber` CLI prettifier:
 
 ```
 2026-07-06T13:44:45.742-07:00 PDT [INFO ] (mymodule.nim:4) mymodule: Hello, world!
@@ -93,7 +93,7 @@ logger.error("Error occurred")
 logger.fatal("Fatal error")
 ```
 
-### Output:
+#### Output:
 
 ```json
 {"timestamp":"2026-07-06T20:44:46.592Z","level":"TRACE","name":"app","filename":"app.nim","line":4,"message":"Detailed tracing info"}
@@ -104,7 +104,7 @@ logger.fatal("Fatal error")
 {"timestamp":"2026-07-06T20:44:46.592Z","level":"FATAL","name":"app","filename":"app.nim","line":9,"message":"Fatal error"}
 ```
 
-### Piped through `lumber`:
+#### Piped through `lumber`:
 
 ```
 2026-07-06T13:44:46.592-07:00 PDT [TRACE] (app.nim:4) app: Detailed tracing info
@@ -132,7 +132,7 @@ Output — only the ERROR line is emitted:
 {"timestamp":"2026-07-06T20:44:47.409Z","level":"ERROR","name":"api","filename":"app.nim","line":6,"message":"processed"}
 ```
 
-### Piped through `lumber`:
+#### Piped through `lumber`:
 
 ```
 2026-07-06T13:44:47.409-07:00 PDT [ERROR] (app.nim:6) api: processed
@@ -155,7 +155,7 @@ type User = object
 logger.info("Found {0}", User(name: "Dude", age: 40))
 ```
 
-### Output:
+#### Output:
 
 ```json
 {"timestamp":"2026-07-06T20:44:48.243Z","level":"INFO","name":"api","filename":"app.nim","line":4,"message":"User alice logged in from 10.0.0.1"}
@@ -163,7 +163,7 @@ logger.info("Found {0}", User(name: "Dude", age: 40))
 {"timestamp":"2026-07-06T20:44:48.243Z","level":"INFO","name":"api","filename":"app.nim","line":11,"message":"Found User(name: \"Dude\", age: 40)"}
 ```
 
-### Piped through `lumber`:
+#### Piped through `lumber`:
 
 ```
 2026-07-06T13:44:48.243-07:00 PDT [INFO ] (app.nim:4) api: User alice logged in from 10.0.0.1
@@ -183,14 +183,14 @@ logger.info("User logged in", user="alice", ip="10.0.0.1")
 logger.info("Request {0} completed", reqId, status=200, latency=42)
 ```
 
-### Output:
+#### Output:
 
 ```json
 {"timestamp":"2026-07-06T20:44:49.081Z","level":"INFO","name":"api","filename":"app.nim","line":5,"message":"User logged in","extra":{"user":"alice","ip":"10.0.0.1"}}
 {"timestamp":"2026-07-06T20:44:49.082Z","level":"INFO","name":"api","filename":"app.nim","line":6,"message":"Request req-abc completed","extra":{"status":200,"latency":42}}
 ```
 
-### Piped through `lumber --pretty`:
+#### Piped through `lumber --pretty`:
 
 ```
 2026-07-06T13:44:49.081-07:00 PDT [INFO ] (app.nim:5) api: User logged in
@@ -214,7 +214,7 @@ Output — `user` is `"alice"`, not `"system"`:
 {"timestamp":"2026-07-06T20:44:49.908Z","level":"INFO","name":"app","filename":"app.nim","line":4,"message":"login","extra":{"user":"alice"}}
 ```
 
-### Piped through `lumber --pretty`:
+#### Piped through `lumber --pretty`:
 
 ```
 2026-07-06T13:44:49.908-07:00 PDT [INFO ] (app.nim:4) app: login
@@ -238,13 +238,13 @@ except IOError as e:
   logger.error("Failed to load config", e)
 ```
 
-### Output:
+#### Output:
 
 ```json
 {"timestamp":"2026-07-06T20:44:50.747Z","level":"ERROR","name":"api","filename":"app.nim","line":14,"message":"Failed to load config","extra":{"error":"file not found: config.toml","errorType":"IOError","stackTrace":"app.nim(12) app\napp.nim(9) initApp\napp.nim(6) loadConfig\n"}}
 ```
 
-### Piped through `lumber` — stack traces are rendered on separate lines automatically:
+#### Piped through `lumber` — stack traces are rendered on separate lines automatically:
 
 ```
 2026-07-06T13:44:50.747-07:00 PDT [ERROR] (app.nim:14) api: Failed to load config
@@ -262,13 +262,13 @@ The exception can be passed positionally (as above), as a keyword argument (`err
 logger.error("Multiple failures", e1, e2)
 ```
 
-### Output:
+#### Output:
 
 ```json
 {"timestamp":"2026-07-06T20:44:50.747Z","level":"ERROR","name":"api","filename":"app.nim","line":18,"message":"Multiple failures","extra":{"errors":[{"error":"bad input","errorType":"ValueError"},{"error":"disk full","errorType":"IOError"}]}}
 ```
 
-### Piped through `lumber`:
+#### Piped through `lumber`:
 
 ```
 2026-07-06T13:44:50.747-07:00 PDT [ERROR] (app.nim:18) api: Multiple failures
@@ -294,14 +294,14 @@ logger.time(LogLevel.DEBUG, "template render"):
   renderPage()
 ```
 
-### Output:
+#### Output:
 
 ```json
 {"timestamp":"2026-07-06T20:46:29.020Z","level":"INFO","name":"db","filename":"app.nim","line":5,"message":"db query","extra":{"duration_ms":137.24900000000002}}
 {"timestamp":"2026-07-06T20:46:29.041Z","level":"DEBUG","name":"db","filename":"app.nim","line":11,"message":"template render","extra":{"duration_ms":21.38100000000001}}
 ```
 
-### Piped through `lumber` — the duration is displayed inline after the message:
+#### Piped through `lumber` — the duration is displayed inline after the message:
 
 ```
 2026-07-06T13:46:29.020-07:00 PDT [INFO ] (app.nim:5) db: db query (137ms)
@@ -322,14 +322,14 @@ var dbLogger = reqLogger.child(name = "db", extra = %* {"query": "SELECT ..."})
 dbLogger.error("Connection timeout")
 ```
 
-### Output:
+#### Output:
 
 ```json
 {"timestamp":"2026-07-06T20:44:52.516Z","level":"INFO","name":"api","filename":"app.nim","line":6,"message":"Handling request","extra":{"service":"my-app","requestId":"abc-123"}}
 {"timestamp":"2026-07-06T20:44:52.516Z","level":"ERROR","name":"db","filename":"app.nim","line":9,"message":"Connection timeout","extra":{"service":"my-app","requestId":"abc-123","query":"SELECT ..."}}
 ```
 
-### Piped through `lumber --pretty`:
+#### Piped through `lumber --pretty`:
 
 ```
 2026-07-06T13:44:52.516-07:00 PDT [INFO ] (app.nim:6) api: Handling request
@@ -376,7 +376,7 @@ Output — note `orderId` appears only inside the nested block:
 {"timestamp":"2026-07-06T20:44:53.346Z","level":"INFO","name":"api","filename":"app.nim","line":11,"message":"done","extra":{"requestId":"abc-123","userId":42}}
 ```
 
-### Piped through `lumber --pretty`:
+#### Piped through `lumber --pretty`:
 
 ```
 2026-07-06T13:44:53.346-07:00 PDT [INFO ] (app.nim:6) api: handling request
@@ -423,7 +423,7 @@ Output — the INFO line is enriched with `env`; the DEBUG line is suppressed:
 {"timestamp":"2026-07-06T20:44:54.172Z","level":"INFO","name":"api","filename":"app.nim","line":15,"message":"request served","extra":{"env":"production"}}
 ```
 
-### Piped through `lumber --pretty`:
+#### Piped through `lumber --pretty`:
 
 ```
 2026-07-06T13:44:54.172-07:00 PDT [INFO ] (app.nim:15) api: request served
@@ -473,7 +473,7 @@ Events 6-12 are dropped. When the window expires, the next emitted message from 
 {"timestamp":"2026-07-06T20:46:31.143Z","level":"INFO","name":"api","filename":"app.nim","line":11,"message":"Event 13","extra":{"suppressed":7}}
 ```
 
-### Piped through `lumber --pretty`:
+#### Piped through `lumber --pretty`:
 
 ```
 2026-07-06T13:46:30.041-07:00 PDT [INFO ] (app.nim:11) api: Event 1
@@ -839,7 +839,7 @@ for o in outputs:
 {"timestamp":"2026-07-06T20:44:57.232Z","level":"FATAL","name":"demo","filename":"demo.nim","line":39,"message":"Shutting down","extra":{"service":"demo-api","env":"production"}}
 ```
 
-### Piped through `lumber --pretty`:
+#### Piped through `lumber --pretty`:
 
 ```
 2026-07-06T13:44:57.230-07:00 PDT [INFO ] (demo.nim:26) demo: Starting up
