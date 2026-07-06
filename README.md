@@ -126,7 +126,7 @@ logger.info("skipped")        # no work done
 logger.error("processed")     # goes through normally
 ```
 
-Output (only the ERROR line is emitted):
+#### Output (only the ERROR line is emitted):
 
 ```json
 {"timestamp":"2026-07-06T20:44:47.409Z","level":"ERROR","name":"api","filename":"app.nim","line":6,"message":"processed"}
@@ -208,7 +208,7 @@ var logger = newLogger(extra = %* {"user": "system"})
 logger.info("login", user="alice")
 ```
 
-Output (`user` is `"alice"`, not `"system"`):
+#### Output (`user` is `"alice"`, not `"system"`):
 
 ```json
 {"timestamp":"2026-07-06T20:44:49.908Z","level":"INFO","name":"app","filename":"app.nim","line":4,"message":"login","extra":{"user":"alice"}}
@@ -368,7 +368,7 @@ withContext(%* {"requestId": "abc-123", "userId": 42}):
   logger.info("done")
 ```
 
-Output (note `orderId` appears only inside the nested block):
+#### Output (note `orderId` appears only inside the nested block):
 
 ```json
 {"timestamp":"2026-07-06T20:44:53.346Z","level":"INFO","name":"api","filename":"app.nim","line":6,"message":"handling request","extra":{"requestId":"abc-123","userId":42}}
@@ -417,7 +417,7 @@ logger.debug("cache miss")  # suppressed by the second middleware
 clearMiddleware()
 ```
 
-Output (the INFO line is enriched with `env`; the DEBUG line is suppressed):
+#### Output (the INFO line is enriched with `env`; the DEBUG line is suppressed):
 
 ```json
 {"timestamp":"2026-07-06T20:44:54.172Z","level":"INFO","name":"api","filename":"app.nim","line":15,"message":"request served","extra":{"env":"production"}}
