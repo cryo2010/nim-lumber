@@ -74,7 +74,7 @@ var logger = newLogger()
 # Named logger with extra context (JsonNode)
 var logger = newLogger(name = "api", extra = %* {"service": "my-app"})
 
-# Extra also accepts Nim objects — fields are serialized automatically
+# Extra also accepts Nim objects; fields are serialized automatically
 type AppContext = object
   service: string
   version: string
@@ -126,7 +126,7 @@ logger.info("skipped")        # no work done
 logger.error("processed")     # goes through normally
 ```
 
-Output — only the ERROR line is emitted:
+Output (only the ERROR line is emitted):
 
 ```json
 {"timestamp":"2026-07-06T20:44:47.409Z","level":"ERROR","name":"api","filename":"app.nim","line":6,"message":"processed"}
@@ -208,7 +208,7 @@ var logger = newLogger(extra = %* {"user": "system"})
 logger.info("login", user="alice")
 ```
 
-Output — `user` is `"alice"`, not `"system"`:
+Output (`user` is `"alice"`, not `"system"`):
 
 ```json
 {"timestamp":"2026-07-06T20:44:49.908Z","level":"INFO","name":"app","filename":"app.nim","line":4,"message":"login","extra":{"user":"alice"}}
@@ -223,7 +223,7 @@ Output — `user` is `"alice"`, not `"system"`:
 
 ### Exception Logging
 
-Pass any `ref Exception` as an argument — lumber automatically extracts the message, type name, and stack trace into structured fields.
+Pass any `ref Exception` as an argument, and lumber automatically extracts the message, type name, and stack trace into structured fields.
 
 ```nim
 proc loadConfig() =
@@ -244,7 +244,7 @@ except IOError as e:
 {"timestamp":"2026-07-06T20:44:50.747Z","level":"ERROR","name":"api","filename":"app.nim","line":14,"message":"Failed to load config","extra":{"error":"file not found: config.toml","errorType":"IOError","stackTrace":"app.nim(12) app\napp.nim(9) initApp\napp.nim(6) loadConfig\n"}}
 ```
 
-#### Piped through `lumber` — stack traces are rendered on separate lines automatically:
+#### Piped through `lumber` (stack traces are rendered on separate lines automatically):
 
 ```
 2026-07-06T13:44:50.747-07:00 PDT [ERROR] (app.nim:14) api: Failed to load config
@@ -256,7 +256,7 @@ except IOError as e:
     app.nim(6) loadConfig
 ```
 
-The exception can be passed positionally (as above), as a keyword argument (`error=e` — the key is ignored), or mixed with other fields (`logger.error("Failed", e, retries=3)`). Multiple exceptions are stored as an array:
+The exception can be passed positionally (as above), as a keyword argument (`error=e`; the key is ignored), or mixed with other fields (`logger.error("Failed", e, retries=3)`). Multiple exceptions are stored as an array:
 
 ```nim
 logger.error("Multiple failures", e1, e2)
@@ -301,7 +301,7 @@ logger.time(LogLevel.DEBUG, "template render"):
 {"timestamp":"2026-07-06T20:46:29.041Z","level":"DEBUG","name":"db","filename":"app.nim","line":11,"message":"template render","extra":{"duration_ms":21.38100000000001}}
 ```
 
-#### Piped through `lumber` — the duration is displayed inline after the message:
+#### Piped through `lumber` (the duration is displayed inline after the message):
 
 ```
 2026-07-06T13:46:29.020-07:00 PDT [INFO ] (app.nim:5) db: db query (137ms)
@@ -353,7 +353,7 @@ var dbLogger = reqLogger.child(name = "db", extra = DbContext(host: "db.local", 
 
 ### Thread-Local Context
 
-Use `withContext` to attach ambient fields that any logger on the current thread will pick up — without passing the logger through function calls.
+Use `withContext` to attach ambient fields that any logger on the current thread will pick up, without passing the logger through function calls.
 
 ```nim
 var logger = newLogger(name = "api")
@@ -368,7 +368,7 @@ withContext(%* {"requestId": "abc-123", "userId": 42}):
   logger.info("done")
 ```
 
-Output — note `orderId` appears only inside the nested block:
+Output (note `orderId` appears only inside the nested block):
 
 ```json
 {"timestamp":"2026-07-06T20:44:53.346Z","level":"INFO","name":"api","filename":"app.nim","line":6,"message":"handling request","extra":{"requestId":"abc-123","userId":42}}
@@ -417,7 +417,7 @@ logger.debug("cache miss")  # suppressed by the second middleware
 clearMiddleware()
 ```
 
-Output — the INFO line is enriched with `env`; the DEBUG line is suppressed:
+Output (the INFO line is enriched with `env`; the DEBUG line is suppressed):
 
 ```json
 {"timestamp":"2026-07-06T20:44:54.172Z","level":"INFO","name":"api","filename":"app.nim","line":15,"message":"request served","extra":{"env":"production"}}
@@ -567,10 +567,10 @@ Output(stream: newDailyFileStream("app.log", maxFiles = 7))
 
 Wrap any stream with `newBufferedStream` for high-throughput logging. Uses a hybrid flush strategy inspired by Go's zap logger:
 
-- **Flush on buffer full** — when accumulated data exceeds `maxSize` (default: 4096 bytes)
-- **Flush on timer** — when `flushIntervalMs` has elapsed since last flush (default: 1000ms)
-- **Flush on level** — immediately on ERROR or FATAL (configurable via `flushLevel`)
-- **Flush on close** — always flushes remaining data
+- **Flush on buffer full** - when accumulated data exceeds `maxSize` (default: 4096 bytes)
+- **Flush on timer** - when `flushIntervalMs` has elapsed since last flush (default: 1000ms)
+- **Flush on level** - immediately on ERROR or FATAL (configurable via `flushLevel`)
+- **Flush on close** - always flushes remaining data
 
 ```nim
 # Default settings (4KB buffer, flush every 1s or on ERROR+)
@@ -668,7 +668,7 @@ myapp | lumber --filter userId=1234 --filter "latency>500"
 
 ### Highlighting
 
-Highlight lines where any field value matches a regex. Unlike `--filter`, non-matching lines are still shown — matching lines get a background tint, and the matched text itself gets a brighter highlight. Matching is case-insensitive.
+Highlight lines where any field value matches a regex. Unlike `--filter`, non-matching lines are still shown: matching lines get a background tint, and the matched text itself gets a brighter highlight. Matching is case-insensitive.
 
 ```sh
 # Highlight a request ID across interleaved logs
