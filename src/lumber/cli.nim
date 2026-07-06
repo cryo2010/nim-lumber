@@ -2,7 +2,8 @@
 ##
 ## Reads JSON log lines from stdin and prints colored, human-readable output.
 
-import std/[json, strutils, os, times, parseopt, re]
+import std/[json, strutils, os, times, parseopt]
+import regex
 import ../lumber
 
 var reset = "\e[0m"
@@ -313,13 +314,13 @@ type
     key: string
     op: FilterOp
     value: string
-    regex: Regex
+    regex: Regex2
 
   CliOptions = object
     level: LogLevel
     tz: string
     filters: seq[Filter]
-    highlights: seq[Regex]
+    highlights: seq[Regex2]
     pretty: bool
     format: string
     timeFormat: string
@@ -336,7 +337,7 @@ proc parseFilter(expr: string): Filter =
       result.op = op
       result.value = expr[idx + token.len .. ^1]
       if op == opRegex:
-        result.regex = re(result.value)
+        result.regex = re2(result.value)
       return
   stderr.writeLine("lumber: invalid filter expression '" & expr & "'")
   quit(1)
@@ -512,7 +513,7 @@ proc parseArgs(): CliOptions =
         if val.len == 0:
           stderr.writeLine("lumber: --highlight requires a value")
           quit(1)
-        result.highlights.add(re(val, {reIgnoreCase}))
+        result.highlights.add(re2("(?i)" & val))
       of "tz":
         let val = getOptVal(p)
         if val.len == 0:
@@ -750,7 +751,7 @@ proc collectValues(j: JsonNode): seq[string] =
         if elem.kind == JString: result.add(elem.getStr())
     of JNull: discard
 
-proc highlightMatches(output: string, highlights: seq[Regex],
+proc highlightMatches(output: string, highlights: seq[Regex2],
                       theme: Theme, reset: string): string =
   ## Apply match-level background highlighting to matched text in the output.
   result = output
@@ -765,16 +766,19 @@ proc highlightMatches(output: string, highlights: seq[Regex],
           newResult &= result[pos .. mIdx]
           pos = mIdx + 1
           continue
-      let (first, last) = findBounds(result, hl, pos)
-      if first < 0:
+      var m: RegexMatch2
+      if not find(result, hl, m, start = pos):
         newResult &= result[pos .. ^1]
         break
+      let first = m.boundaries.a
+      let last = m.boundaries.b
       # Add text before match
       if first > pos:
         newResult &= result[pos ..< first]
       # Add highlighted match
       newResult &= theme.highlightMatch & result[first .. last] & reset & theme.highlightLine
-      pos = last + 1
+      # Guard against zero-width matches to keep the scan advancing
+      pos = max(last + 1, first + 1)
     result = newResult
 
 # -- Main --

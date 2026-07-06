@@ -7,7 +7,8 @@
 ##   use newRateLimiter(window = 1.0, maxBurst = 10)
 ##   use newSampler(rate = 100)  # log 1 in 100
 
-import std/[tables, times, strutils, json, re]
+import std/[tables, times, strutils, json]
+import regex
 import ../lumber
 
 proc newRateLimiter*(window: float = 1.0, maxBurst: int = 5): LogMiddleware =
@@ -83,16 +84,16 @@ proc newRedactor*(keys: seq[string] = @[], placeholder: string = "[REDACTED]"): 
           record.extra[key] = %placeholder
     true
 
-proc newPatternRedactor*(pattern: Regex, placeholder: string = "[REDACTED]"): LogMiddleware =
+proc newPatternRedactor*(pattern: Regex2, placeholder: string = "[REDACTED]"): LogMiddleware =
   ## Creates middleware that scans all string values in extra fields and the
   ## message, replacing any match of `pattern` with the placeholder.
   ## Useful for redacting credit card numbers, API keys, emails, etc.
   result = proc(record: var LogRecord): bool =
-    record.message = record.message.replacef(pattern, placeholder)
+    record.message = record.message.replace(pattern, placeholder)
     if not record.extra.isNil and record.extra.kind == JObject:
       for key, val in record.extra.pairs:
         if val.kind == JString:
-          let replaced = val.getStr().replacef(pattern, placeholder)
+          let replaced = val.getStr().replace(pattern, placeholder)
           if replaced != val.getStr():
             record.extra[key] = %replaced
     true

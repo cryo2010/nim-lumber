@@ -314,7 +314,7 @@ Import `lumber/middleware` for ready-made middleware:
 ```nim
 import lumber
 import lumber/middleware
-import std/re
+import regex
 
 # Rate limiter: allow max 5 messages per second from the same source location
 use newRateLimiter(window = 1.0, maxBurst = 5)
@@ -340,7 +340,7 @@ use newRedactor()
 use newRedactor(@["password", "token", "ssn"])
 
 # Redact values matching a regex pattern (e.g. credit card numbers)
-use newPatternRedactor(re"\d{4}-\d{4}-\d{4}-\d{4}")
+use newPatternRedactor(re2"\d{4}-\d{4}-\d{4}-\d{4}")
 
 # Custom placeholder
 use newRedactor(@["apiKey"], placeholder = "***")

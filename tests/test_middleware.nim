@@ -1,5 +1,6 @@
 import unittest
-import std/[streams, os, json, strutils, re]
+import std/[streams, os, json, strutils]
+import regex
 import lumber
 import lumber/middleware
 
@@ -175,7 +176,7 @@ test "redactor uses custom placeholder":
 
 test "pattern redactor scrubs matching values":
   setupTest()
-  use newPatternRedactor(re"\d{4}-\d{4}-\d{4}-\d{4}")
+  use newPatternRedactor(re2"\d{4}-\d{4}-\d{4}-\d{4}")
   var logger = newLogger(name = "test")
   logger.info("Payment with card 4111-1111-1111-1111 processed", cardNum="4111-1111-1111-1111")
   check captured.len == 1
@@ -187,7 +188,7 @@ test "pattern redactor scrubs matching values":
 
 test "pattern redactor leaves non-matching values intact":
   setupTest()
-  use newPatternRedactor(re"\d{4}-\d{4}-\d{4}-\d{4}")
+  use newPatternRedactor(re2"\d{4}-\d{4}-\d{4}-\d{4}")
   var logger = newLogger(name = "test")
   logger.info("Hello world", user="alice")
   check captured.len == 1
