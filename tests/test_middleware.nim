@@ -70,6 +70,42 @@ test "rate limiter reports suppressed count":
   let j = parseJson(captured[0])
   check j["extra"]["suppressed"].getInt() == 3
 
+test "middleware mutation does not leak into logger extra":
+  setupTest()
+  use proc(record: var LogRecord): bool =
+    if record.extra.isNil:
+      record.extra = newJObject()
+    record.extra["injected"] = %"per-message"
+    true
+  var logger = newLogger(name = "test", extra = %* {"requestId": "abc"})
+  logger.info("first")
+  logger.info("second")
+  check logger.extra == %* {"requestId": "abc"}
+  check captured.len == 2
+  for line in captured:
+    let j = parseJson(line)
+    check j["extra"]["injected"].getStr() == "per-message"
+    check j["extra"]["requestId"].getStr() == "abc"
+
+test "rate limiter suppressed count does not stick to logger extra":
+  setupTest()
+  use newRateLimiter(window = 0.05, maxBurst = 1)
+  var logger = newLogger(name = "test", extra = %* {"service": "api"})
+  # Single source line: emit, drop 3, then emit again after the window
+  # so the suppressed count attaches to that second emit
+  for i in 0 ..< 5:
+    if i == 4:
+      sleep(100)
+    logger.info("msg")
+  sleep(100)  # new window, no pending drops
+  logger.info("clean")
+  check not logger.extra.hasKey("suppressed")
+  check captured.len == 3
+  let withCount = parseJson(captured[1])
+  check withCount["extra"]["suppressed"].getInt() == 3
+  let last = parseJson(captured[2])
+  check not last["extra"].hasKey("suppressed")
+
 test "sampler logs 1 in N":
   setupTest()
   use newSampler(rate = 5)

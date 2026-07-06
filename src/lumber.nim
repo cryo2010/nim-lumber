@@ -408,7 +408,12 @@ proc writeLog*(logger: Logger, level: LogLevel, filename: string, line: int,
   # Merge order: context (lowest) → logger.extra → fields (highest)
   # Fast path: no merging needed
   if not hasContext and not hasFields:
-    extra = logger.extra  # nil or existing ref, no copy
+    if middleware.len > 0 and not logger.extra.isNil:
+      # Middleware mutates record.extra; give the record its own copy so
+      # the mutation can't leak into the logger's persistent extra.
+      extra = logger.extra.copy()
+    else:
+      extra = logger.extra  # nil or existing ref, no copy
   elif not hasContext and not hasLoggerExtra:
     extra = fields
   else:
