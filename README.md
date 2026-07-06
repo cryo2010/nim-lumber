@@ -1,6 +1,7 @@
 # lumber
 
 [![CI](https://github.com/cryo2010/nim-lumber/actions/workflows/ci.yml/badge.svg)](https://github.com/cryo2010/nim-lumber/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 A compile-time optimized JSON logger for Nim with a built-in CLI prettifier.
 
@@ -8,7 +9,7 @@ A compile-time optimized JSON logger for Nim with a built-in CLI prettifier.
 
 ## Features
 
-- **Zero dependencies** - only uses the Nim standard library
+- **Minimal dependencies** - the Nim standard library plus a single pure-Nim package ([regex](https://github.com/nitely/nim-regex)), compiled in statically; no C libraries or runtime dependencies
 - **Thread-safe** - safe for concurrent use from multiple threads
 - **Compile-time level filtering** - log calls below the threshold are eliminated from the binary entirely, with zero runtime cost
 - **Structured JSON output** - every log line is valid JSON with timestamp, level, name, filename, line number, and message
@@ -314,7 +315,7 @@ Import `lumber/middleware` for ready-made middleware:
 ```nim
 import lumber
 import lumber/middleware
-import std/re
+import regex
 
 # Rate limiter: allow max 5 messages per second from the same source location
 use newRateLimiter(window = 1.0, maxBurst = 5)
@@ -340,7 +341,7 @@ use newRedactor()
 use newRedactor(@["password", "token", "ssn"])
 
 # Redact values matching a regex pattern (e.g. credit card numbers)
-use newPatternRedactor(re"\d{4}-\d{4}-\d{4}-\d{4}")
+use newPatternRedactor(re2"\d{4}-\d{4}-\d{4}-\d{4}")
 
 # Custom placeholder
 use newRedactor(@["apiKey"], placeholder = "***")
