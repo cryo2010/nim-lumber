@@ -21,11 +21,10 @@ requires "regex >= 0.25.0"
 
 # Tasks
 
-task test, "Run the test suite":
-  exec "nim c --hints:off --threads:on -r tests/test_logger.nim"
-  exec "nim c --hints:off --threads:on -r tests/test_middleware.nim"
-  exec "nim c --hints:off --threads:on -r tests/test_threading.nim"
-  exec "nim c --hints:off --threads:on -r tests/test_streams.nim"
+task test, "Run the test suite (set LUMBER_TEST_MM to test another memory manager, e.g. atomicArc)":
+  let mm = getEnv("LUMBER_TEST_MM", "orc")
+  for t in ["test_logger", "test_middleware", "test_threading", "test_streams"]:
+    exec "nim c --mm:" & mm & " --hints:off --threads:on -r tests/" & t & ".nim"
 
 task setVersion, "Set the package version in lumber.nimble and src/lumber/version.nim (nimble setVersion X.Y.Z)":
   proc replaceLine(path, prefix, newLine: string) =
