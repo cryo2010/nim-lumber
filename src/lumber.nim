@@ -115,6 +115,7 @@ template configureLogging*(cfg, body: untyped) =
   ## Reconfigure from long-lived threads (typically the main thread); with
   ## ORC, dropping the previous configuration's references from a
   ## short-lived thread corrupts cycle collection once that thread exits.
+  ## Compiling with `--mm:atomicArc` removes this constraint.
   ##
   ## ```nim
   ## configureLogging(cfg):

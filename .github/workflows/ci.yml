@@ -9,6 +9,9 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        mm: [orc, arc, atomicArc]
     steps:
       - uses: actions/checkout@v4
 
@@ -16,10 +19,13 @@ jobs:
         with:
           nim-version: 'stable'
 
-      - name: Run tests
+      - name: Run tests (--mm:${{ matrix.mm }})
         run: nimble test -y
+        env:
+          LUMBER_TEST_MM: ${{ matrix.mm }}
 
       - name: Build CLI
+        if: matrix.mm == 'orc'
         run: nimble buildProd -y
 
   #test-devel:
