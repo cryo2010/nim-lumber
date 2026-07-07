@@ -134,6 +134,20 @@ test "time block with custom level":
     for i in 0 ..< 1000:
       sum += i
 
+test "runtime-filtered calls do not evaluate arguments":
+  var evaluated = false
+  proc sideEffect(): string =
+    evaluated = true
+    "value"
+  var logger = newLogger(name = "test")
+  logger.level = LogLevel.ERROR
+  logger.info("msg {0}", sideEffect())
+  logger.info("event", field=sideEffect())
+  check not evaluated
+  logger.level = LogLevel.TRACE
+  logger.error("msg {0}", sideEffect())
+  check evaluated
+
 test "compile-time no-op for lower levels":
   # This compiles and runs but produces no output when compiled with -d:lumberLevel=INFO
   var logger = newLogger(name = "test")

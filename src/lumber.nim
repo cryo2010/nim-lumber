@@ -366,6 +366,13 @@ proc genLogCall(level: LogLevel, logger: NimNode, args: NimNode): NimNode =
   let levelLit = newLit(level)
   let filename = newLit(info.filename.relativePath(getProjectPath()))
   let line = newLit(info.line)
+  # Bind non-trivial logger expressions to a temporary so the runtime level
+  # gate below doesn't evaluate them twice
+  var loggerRef = logger
+  var setup = newStmtList()
+  if logger.kind notin {nnkSym, nnkIdent}:
+    loggerRef = genSym(nskLet, "lumberLogger")
+    setup.add(newLetStmt(loggerRef, logger))
   let fieldsVar = genSym(nskVar, "fields")
   let argsVar = genSym(nskVar, "args")
   let stmts = newStmtList()
@@ -398,9 +405,13 @@ proc genLogCall(level: LogLevel, logger: NimNode, args: NimNode): NimNode =
     )
   else:
     newNilLit()
-  let writeCall = newCall(bindSym"writeLog", logger, levelLit, filename, line, msgCall, fieldsNode)
+  let writeCall = newCall(bindSym"writeLog", loggerRef, levelLit, filename, line, msgCall, fieldsNode)
   stmts.add(writeCall)
-  result = stmts
+  # Gate everything behind the runtime level check so filtered calls never
+  # evaluate arguments, build the fields object, or format the message
+  let cond = infix(levelLit, ">=", newDotExpr(loggerRef, ident"level"))
+  result = setup
+  result.add(newTree(nnkIfStmt, newTree(nnkElifBranch, cond, stmts)))
 
 macro trace*(logger: typed, args: varargs[untyped]): untyped =
   genLogCall(LogLevel.TRACE, logger, args)
