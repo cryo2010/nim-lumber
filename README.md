@@ -600,7 +600,7 @@ In benchmarks, buffered streams are ~1.5-2.3x faster than unbuffered, with the g
 
 ### Async Streams
 
-Wrap any stream with `newAsyncStream` for non-blocking I/O. Log calls push data onto a channel and return immediately; a background thread handles the writes.
+Wrap any stream with `newAsyncStream` for non-blocking I/O. Log calls push data onto a channel and return immediately; a background thread handles the writes. Writes are batched while the writer has backlog, and the thread flushes the wrapped stream whenever its queue drains, so an idle logger never leaves data sitting in a buffer. `close` flushes everything and joins the thread.
 
 ```nim
 configureLogging(cfg):

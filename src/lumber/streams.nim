@@ -214,6 +214,10 @@ proc asyncWriterLoop(state: ptr AsyncState) {.thread.} =
       state.inner.flush()
     else:
       state.inner.write(msg.data)
+      # Batch while there is backlog; flush the moment the queue drains so
+      # data never sits in the inner stream's buffer while the logger is idle
+      if state.chan.peek() == 0:
+        state.inner.flush()
 
 proc asyncWrite(s: Stream, buffer: pointer, bufLen: int) {.nimcall.} =
   {.cast(raises: []).}: {.cast(tags: []).}:
@@ -240,6 +244,10 @@ proc asyncClose(s: Stream) {.nimcall.} =
     deallocShared(a.state)
 
 proc newAsyncStream*(inner: Stream): AsyncStream =
+  ## Wraps `inner` so writes return immediately and a background thread
+  ## performs the actual I/O. Writes are batched while the queue has
+  ## backlog; the writer flushes `inner` whenever the queue drains, and
+  ## `close` flushes everything and joins the thread.
   new(result)
   result.state = cast[ptr AsyncState](allocShared0(sizeof(AsyncState)))
   result.state.chan.open()

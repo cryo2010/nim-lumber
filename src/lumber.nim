@@ -309,6 +309,10 @@ proc writeLog*(logger: Logger, level: LogLevel, filename: string, line: int,
       if o.stream of BufferedStream:
         if outLevel >= BufferedStream(o.stream).flushLevel:
           o.stream.flush()
+      elif o.stream of AsyncStream:
+        # The writer thread batches under load and flushes when its queue
+        # drains; a per-record flush message would defeat the batching
+        discard
       else:
         o.stream.flush()
 
