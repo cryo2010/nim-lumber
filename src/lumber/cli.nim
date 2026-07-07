@@ -253,7 +253,6 @@ proc levelOrd(level: string): int =
   of "FATAL": 5
   else: -1
 
-const Version = "0.1.0"
 const Help = """
 lumber - JSON log prettifier
 
@@ -487,7 +486,7 @@ proc parseArgs(): CliOptions =
         echo Help
         quit(0)
       of "version", "v":
-        echo "lumber " & Version
+        echo "lumber " & LumberVersion
         quit(0)
       of "init":
         initConfig()

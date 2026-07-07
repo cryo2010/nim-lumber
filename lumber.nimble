@@ -1,11 +1,17 @@
 # Package
 
+import std/strutils
+
+# Nimble requires a string literal here. Keep in sync with
+# src/lumber/version.nim: run `nimble setVersion X.Y.Z` to update both;
+# the test suite fails on drift.
 version       = "0.1.0"
 author        = "Craig Younker"
 description   = "A JSON logger and prettifier CLI"
 license       = "MIT"
 srcDir        = "src"
 installExt    = @["nim"]
+namedBin["lumber/cli"] = "lumber"
 
 
 # Dependencies
@@ -19,6 +25,37 @@ task test, "Run the test suite":
   exec "nim c --hints:off --threads:on -r tests/test_logger.nim"
   exec "nim c --hints:off --threads:on -r tests/test_middleware.nim"
   exec "nim c --hints:off --threads:on -r tests/test_threading.nim"
+
+task setVersion, "Set the package version in lumber.nimble and src/lumber/version.nim (nimble setVersion X.Y.Z)":
+  proc replaceLine(path, prefix, newLine: string) =
+    var lines = readFile(path).splitLines
+    for i in 0 ..< lines.len:
+      if lines[i].startsWith(prefix):
+        lines[i] = newLine
+        writeFile(path, lines.join("\n"))
+        return
+    quit("setVersion: could not find '" & prefix & "' in " & path)
+
+  # The version is the last parameter of the invocation
+  var newVer = ""
+  for i in 0 .. paramCount():
+    newVer = paramStr(i)
+  let parts = newVer.split('.')
+  var valid = parts.len == 3
+  if valid:
+    for p in parts:
+      try:
+        discard parseInt(p)
+      except ValueError:
+        valid = false
+  if not valid:
+    quit("usage: nimble setVersion X.Y.Z")
+
+  replaceLine("lumber.nimble", "version",
+    "version       = \"" & newVer & "\"")
+  replaceLine("src/lumber/version.nim", "const LumberVersion",
+    "const LumberVersion* = \"" & newVer & "\"")
+  echo "Version set to ", newVer, " in lumber.nimble and src/lumber/version.nim"
 
 task buildDev, "Build the CLI (debug, with stack traces)":
   exec "nim c --threads:on -o:lumber src/lumber/cli.nim"

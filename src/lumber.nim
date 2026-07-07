@@ -10,6 +10,9 @@ export json
 import ./lumber/types
 export types
 
+import ./lumber/version
+export version
+
 import ./lumber/streams as lumberstreams
 export SizeRotateStream, newRollingFileStream, TimeRotateStream, newDailyFileStream,
   BufferedStream, newBufferedStream, defaultBufferSize, defaultFlushIntervalMs,

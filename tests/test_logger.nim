@@ -1,6 +1,19 @@
 import unittest
-import std/json
+import std/[json, os, strutils]
 import lumber
+
+test "nimble version matches LumberVersion":
+  # Nimble requires a literal in the .nimble file, so the version exists
+  # in two places; this guards against drift
+  let nimblePath = if fileExists("lumber.nimble"): "lumber.nimble"
+                   else: ".." / "lumber.nimble"
+  var nimbleVersion = ""
+  for line in readFile(nimblePath).splitLines:
+    let l = line.strip()
+    if l.startsWith("version"):
+      nimbleVersion = l.split('"')[1]
+      break
+  check nimbleVersion == LumberVersion
 
 type
   User = object

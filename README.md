@@ -26,6 +26,8 @@ A compile-time optimized JSON logger for Nim with a built-in CLI prettifier.
 nimble install lumber
 ```
 
+This installs both the library and the `lumber` CLI prettifier (into nimble's bin directory, typically `~/.nimble/bin`).
+
 ## Quick Start
 
 ```nim
