@@ -53,36 +53,46 @@ test "child logger inherits name when not overridden":
   child.info("inherited name")
 
 test "middleware can enrich records":
-  clearMiddleware()
-  use proc(record: var LogRecord): bool =
-    if record.extra.isNil:
-      record.extra = newJObject()
-    record.extra["env"] = %"test"
-    true
+  configureLogging(cfg):
+    cfg.middleware = @[]
+  configureLogging(cfg):
+    cfg.middleware.add proc(record: var LogRecord): bool =
+      if record.extra.isNil:
+        record.extra = newJObject()
+      record.extra["env"] = %"test"
+      true
   var logger = newLogger(name = "test")
   logger.info("enriched")
-  clearMiddleware()
+  configureLogging(cfg):
+    cfg.middleware = @[]
 
 test "middleware can suppress records":
-  clearMiddleware()
-  use proc(record: var LogRecord): bool =
-    record.level != "DEBUG"
+  configureLogging(cfg):
+    cfg.middleware = @[]
+  configureLogging(cfg):
+    cfg.middleware.add proc(record: var LogRecord): bool =
+      record.level != "DEBUG"
   var logger = newLogger(name = "test")
   logger.info("should appear")
   logger.debug("should be suppressed")
-  clearMiddleware()
+  configureLogging(cfg):
+    cfg.middleware = @[]
 
 test "middleware chain runs in order":
-  clearMiddleware()
-  use proc(record: var LogRecord): bool =
-    record.message &= " [first]"
-    true
-  use proc(record: var LogRecord): bool =
-    record.message &= " [second]"
-    true
+  configureLogging(cfg):
+    cfg.middleware = @[]
+  configureLogging(cfg):
+    cfg.middleware.add proc(record: var LogRecord): bool =
+      record.message &= " [first]"
+      true
+  configureLogging(cfg):
+    cfg.middleware.add proc(record: var LogRecord): bool =
+      record.message &= " [second]"
+      true
   var logger = newLogger(name = "test")
   logger.info("chained")
-  clearMiddleware()
+  configureLogging(cfg):
+    cfg.middleware = @[]
 
 test "extra accepts Nim objects":
   type Context = object

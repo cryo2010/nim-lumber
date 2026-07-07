@@ -27,12 +27,61 @@ proc newCaptureStream(): CaptureStream =
 
 template setupTest() =
   captured.setLen(0)
-  clearMiddleware()
-  outputs = @[Output(stream: newCaptureStream())]
+  configureLogging(cfg):
+    cfg.middleware = @[]
+    cfg.outputs = @[Output(stream: newCaptureStream())]
+
+test "configureLogging commits middleware and outputs atomically":
+  captured.setLen(0)
+  configureLogging(cfg):
+    cfg.outputs = @[Output(stream: newCaptureStream())]
+    cfg.middleware = @[]
+    cfg.middleware.add proc(record: var LogRecord): bool =
+      if record.extra.isNil:
+        record.extra = newJObject()
+      record.extra["configured"] = %true
+      true
+  var logger = newLogger(name = "test")
+  logger.info("hello")
+  check captured.len == 1
+  let j = parseJson(captured[0])
+  check j["extra"]["configured"].getBool()
+
+test "configureLogging commits nothing when the block raises":
+  setupTest()
+  expect ValueError:
+    configureLogging(cfg):
+      # Would suppress everything if it were committed
+      cfg.middleware.add proc(record: var LogRecord): bool = false
+      raise newException(ValueError, "boom")
+  var logger = newLogger(name = "test")
+  logger.info("still logged")
+  check captured.len == 1
+
+test "reentrant configureLogging raises a Defect instead of deadlocking":
+  setupTest()
+  expect Defect:
+    configureLogging(outer):
+      configureLogging(inner):
+        discard inner
+  # Configuration still works after the Defect
+  configureLogging(cfg):
+    cfg.outputs.add Output(stream: newCaptureStream())
+  check outputs.len == 2
+
+test "successive configureLogging calls compose":
+  setupTest()
+  configureLogging(cfg):
+    cfg.outputs.add Output(stream: newCaptureStream())
+  configureLogging(cfg):
+    cfg.outputs.add Output(stream: newCaptureStream())
+  # Each call started from the previous committed state
+  check outputs.len == 3
 
 test "rate limiter allows burst then suppresses":
   setupTest()
-  use newRateLimiter(window = 10.0, maxBurst = 3)
+  configureLogging(cfg):
+    cfg.middleware.add newRateLimiter(window = 10.0, maxBurst = 3)
   var logger = newLogger(name = "test")
   for i in 0 ..< 10:
     logger.info("msg")
@@ -40,7 +89,8 @@ test "rate limiter allows burst then suppresses":
 
 test "rate limiter resets after window":
   setupTest()
-  use newRateLimiter(window = 0.05, maxBurst = 2)
+  configureLogging(cfg):
+    cfg.middleware.add newRateLimiter(window = 0.05, maxBurst = 2)
   var logger = newLogger(name = "test")
   # Same line in a loop — all share one key
   for i in 0 ..< 5:
@@ -55,7 +105,8 @@ test "rate limiter resets after window":
 
 test "rate limiter reports suppressed count":
   setupTest()
-  use newRateLimiter(window = 0.05, maxBurst = 2)
+  configureLogging(cfg):
+    cfg.middleware.add newRateLimiter(window = 0.05, maxBurst = 2)
   var logger = newLogger(name = "test")
   # Single loop: first 5 iterations emit (2 pass, 3 suppressed),
   # then sleep, then 3 more from the same source line
@@ -73,11 +124,12 @@ test "rate limiter reports suppressed count":
 
 test "middleware mutation does not leak into logger extra":
   setupTest()
-  use proc(record: var LogRecord): bool =
-    if record.extra.isNil:
-      record.extra = newJObject()
-    record.extra["injected"] = %"per-message"
-    true
+  configureLogging(cfg):
+    cfg.middleware.add proc(record: var LogRecord): bool =
+      if record.extra.isNil:
+        record.extra = newJObject()
+      record.extra["injected"] = %"per-message"
+      true
   var logger = newLogger(name = "test", extra = %* {"requestId": "abc"})
   logger.info("first")
   logger.info("second")
@@ -90,7 +142,8 @@ test "middleware mutation does not leak into logger extra":
 
 test "rate limiter suppressed count does not stick to logger extra":
   setupTest()
-  use newRateLimiter(window = 0.05, maxBurst = 1)
+  configureLogging(cfg):
+    cfg.middleware.add newRateLimiter(window = 0.05, maxBurst = 1)
   var logger = newLogger(name = "test", extra = %* {"service": "api"})
   # Single source line: emit, drop 3, then emit again after the window
   # so the suppressed count attaches to that second emit
@@ -109,7 +162,8 @@ test "rate limiter suppressed count does not stick to logger extra":
 
 test "sampler logs 1 in N":
   setupTest()
-  use newSampler(rate = 5)
+  configureLogging(cfg):
+    cfg.middleware.add newSampler(rate = 5)
   var logger = newLogger(name = "test")
   for i in 0 ..< 20:
     logger.info("msg")
@@ -118,7 +172,8 @@ test "sampler logs 1 in N":
 
 test "level sampler passes high levels through":
   setupTest()
-  use newLevelSampler(level = LogLevel.DEBUG, rate = 100)
+  configureLogging(cfg):
+    cfg.middleware.add newLevelSampler(level = LogLevel.DEBUG, rate = 100)
   var logger = newLogger(name = "test")
   # ERROR should always pass
   for i in 0 ..< 10:
@@ -127,7 +182,8 @@ test "level sampler passes high levels through":
 
 test "level sampler samples low levels":
   setupTest()
-  use newLevelSampler(level = LogLevel.DEBUG, rate = 5)
+  configureLogging(cfg):
+    cfg.middleware.add newLevelSampler(level = LogLevel.DEBUG, rate = 5)
   var logger = newLogger(name = "test")
   for i in 0 ..< 20:
     logger.debug("noisy")
@@ -136,7 +192,8 @@ test "level sampler samples low levels":
 
 test "level sampler combines both behaviors":
   setupTest()
-  use newLevelSampler(level = LogLevel.INFO, rate = 10)
+  configureLogging(cfg):
+    cfg.middleware.add newLevelSampler(level = LogLevel.INFO, rate = 10)
   var logger = newLogger(name = "test")
   for i in 0 ..< 20:
     logger.info("sampled")
@@ -147,7 +204,8 @@ test "level sampler combines both behaviors":
 
 test "redactor replaces specified keys":
   setupTest()
-  use newRedactor(@["password", "token"])
+  configureLogging(cfg):
+    cfg.middleware.add newRedactor(@["password", "token"])
   var logger = newLogger(name = "test")
   logger.info("login", password="secret123", token="abc-xyz", user="alice")
   check captured.len == 1
@@ -158,7 +216,8 @@ test "redactor replaces specified keys":
 
 test "redactor ignores missing keys":
   setupTest()
-  use newRedactor(@["password"])
+  configureLogging(cfg):
+    cfg.middleware.add newRedactor(@["password"])
   var logger = newLogger(name = "test")
   logger.info("no password here", user="alice")
   check captured.len == 1
@@ -168,7 +227,8 @@ test "redactor ignores missing keys":
 
 test "redactor uses custom placeholder":
   setupTest()
-  use newRedactor(@["ssn"], placeholder = "***")
+  configureLogging(cfg):
+    cfg.middleware.add newRedactor(@["ssn"], placeholder = "***")
   var logger = newLogger(name = "test")
   logger.info("record", ssn="123-45-6789")
   let j = parseJson(captured[0])
@@ -176,7 +236,8 @@ test "redactor uses custom placeholder":
 
 test "pattern redactor scrubs matching values":
   setupTest()
-  use newPatternRedactor(re2"\d{4}-\d{4}-\d{4}-\d{4}")
+  configureLogging(cfg):
+    cfg.middleware.add newPatternRedactor(re2"\d{4}-\d{4}-\d{4}-\d{4}")
   var logger = newLogger(name = "test")
   logger.info("Payment with card 4111-1111-1111-1111 processed", cardNum="4111-1111-1111-1111")
   check captured.len == 1
@@ -188,7 +249,8 @@ test "pattern redactor scrubs matching values":
 
 test "pattern redactor leaves non-matching values intact":
   setupTest()
-  use newPatternRedactor(re2"\d{4}-\d{4}-\d{4}-\d{4}")
+  configureLogging(cfg):
+    cfg.middleware.add newPatternRedactor(re2"\d{4}-\d{4}-\d{4}-\d{4}")
   var logger = newLogger(name = "test")
   logger.info("Hello world", user="alice")
   check captured.len == 1

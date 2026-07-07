@@ -3,7 +3,7 @@
 ## Compile with `-d:lumberLevel=INFO` to set the minimum log level.
 ## Log calls below the compile-time threshold are completely eliminated.
 
-import std/[jsonutils, times, macros, strutils, os, streams, exitprocs, locks]
+import std/[jsonutils, times, macros, strutils, os, streams, exitprocs, locks, atomics]
 import std/json
 export json
 
@@ -37,18 +37,83 @@ type
     level*: LogLevel = LogLevel.TRACE
     names*: seq[string] = @[]
 
-var middleware*: seq[LogMiddleware] = @[]
+  LogConfig* = object
+    middleware*: seq[LogMiddleware]
+    outputs*: seq[Output]
+
+var middleware: seq[LogMiddleware] = @[]
 var outputs*: seq[Output] = @[Output(stream: newFileStream(stdout))]
 var context* {.threadvar.}: JsonNode
-var writeLock*: Lock
+var writeLock: Lock
+var configLock: Lock
 
 initLock(writeLock)
+initLock(configLock)
 
-proc use*(mw: LogMiddleware) =
-  middleware.add(mw)
+# Lock ordering: configLock is always acquired before writeLock, never the
+# reverse. writeLog only takes writeLock, so logging never blocks on a
+# running configuration callback.
 
-proc clearMiddleware*() =
-  middleware.setLen(0)
+var configOwner: Atomic[int]  # thread id holding configLock; 0 = unowned
+
+proc raiseIfReentrant() =
+  # Only the current thread can have stored its own id, so an equal value
+  # proves reentrancy; configLock is a plain mutex and would deadlock.
+  if configOwner.load(moRelaxed) == getThreadId():
+    raise newException(Defect,
+      "configureLogging is not reentrant: do not call it inside a " &
+      "configureLogging block")
+
+proc configureLoggingImpl(cb: proc(cfg: var LogConfig)) =
+  # configLock serializes configurators for the whole snapshot-callback-commit
+  # sequence, so concurrent reconfigurations cannot lose each other's updates.
+  # writeLock is only held for the snapshot and the commit, so the callback
+  # runs unlocked with respect to logging (and may log). If the callback
+  # raises, nothing is committed.
+  raiseIfReentrant()
+  withLock configLock:
+    configOwner.store(getThreadId(), moRelaxed)
+    defer: configOwner.store(0, moRelaxed)
+    var cfg: LogConfig
+    withLock writeLock:
+      cfg = LogConfig(middleware: middleware, outputs: outputs)
+    cb(cfg)
+    withLock writeLock:
+      for old in outputs:
+        var kept = false
+        for o in cfg.outputs:
+          if o.stream == old.stream:
+            kept = true
+            break
+        if not kept:
+          try:
+            old.stream.flush()
+          except CatchableError:
+            discard
+      middleware = cfg.middleware
+      outputs = cfg.outputs
+
+template configureLogging*(cfg, body: untyped) =
+  ## Reconfigure middleware and outputs atomically. `cfg` names the variable
+  ## that holds a snapshot of the current configuration inside the block;
+  ## changes are committed when the block finishes, so loggers on other
+  ## threads never observe a half-applied configuration. If the block raises,
+  ## nothing is committed. Outputs dropped by the new configuration are
+  ## flushed (but not closed).
+  ##
+  ## Concurrent `configureLogging` calls serialize; each block sees the
+  ## previous one's committed state. The block must not call
+  ## `configureLogging` itself: doing so raises a `Defect` (the config lock
+  ## is not reentrant, and nested commits would silently lose updates).
+  ## Reconfigure from long-lived threads (typically the main thread); with
+  ## ORC, dropping the previous configuration's references from a
+  ## short-lived thread corrupts cycle collection once that thread exits.
+  ##
+  ## ```nim
+  ## configureLogging(cfg):
+  ##   cfg.outputs.add Output(stream: newRollingFileStream("app.log"))
+  ## ```
+  configureLoggingImpl(proc(cfg: var LogConfig) = body)
 
 proc flush*() =
   ## Flush all output streams. Call this before exiting to ensure

@@ -4,8 +4,9 @@
 ##   import lumber
 ##   import lumber/middleware
 ##
-##   use newRateLimiter(window = 1.0, maxBurst = 10)
-##   use newSampler(rate = 100)  # log 1 in 100
+##   configureLogging(cfg):
+##     cfg.middleware.add newRateLimiter(window = 1.0, maxBurst = 10)
+##     cfg.middleware.add newSampler(rate = 100)  # log 1 in 100
 
 import std/[tables, times, strutils, json]
 import regex

@@ -18,6 +18,7 @@ requires "regex >= 0.25.0"
 task test, "Run the test suite":
   exec "nim c --hints:off --threads:on -r tests/test_logger.nim"
   exec "nim c --hints:off --threads:on -r tests/test_middleware.nim"
+  exec "nim c --hints:off --threads:on -r tests/test_threading.nim"
 
 task buildDev, "Build the CLI (debug, with stack traces)":
   exec "nim c --threads:on -o:lumber src/lumber/cli.nim"

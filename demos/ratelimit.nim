@@ -2,7 +2,8 @@ import std/os
 import ../src/lumber
 import ../src/lumber/middleware
 
-use newRateLimiter(window = 1.0, maxBurst = 3)
+configureLogging(cfg):
+  cfg.middleware.add newRateLimiter(window = 1.0, maxBurst = 3)
 
 var logger = newLogger(name = "demo")
 
