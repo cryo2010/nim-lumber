@@ -42,7 +42,10 @@ proc newRateLimiter*(window: float = 1.0, maxBurst: int = 5): LogMiddleware =
 proc newSampler*(rate: int = 10): LogMiddleware =
   ## Creates middleware that logs 1 in every `rate` messages.
   ## The first message is always logged. Every Nth message thereafter
-  ## is emitted; the rest are suppressed.
+  ## is emitted; the rest are suppressed. A `rate` of 1 or less logs
+  ## every message.
+  if rate <= 1:
+    return proc(record: var LogRecord): bool = true
   var counter = 0
   result = proc(record: var LogRecord): bool =
     counter.inc()
@@ -52,6 +55,9 @@ proc newLevelSampler*(level: LogLevel, rate: int = 10): LogMiddleware =
   ## Creates middleware that samples only messages at or below `level`.
   ## Messages above `level` always pass through unsampled.
   ## Useful for sampling DEBUG/TRACE while keeping all WARN+ intact.
+  ## A `rate` of 1 or less logs every message.
+  if rate <= 1:
+    return proc(record: var LogRecord): bool = true
   var counter = 0
   result = proc(record: var LogRecord): bool =
     let recordLevel = parseEnum[LogLevel](record.level)
