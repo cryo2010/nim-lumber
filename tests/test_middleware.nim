@@ -37,8 +37,6 @@ test "configureLogging commits middleware and outputs atomically":
     cfg.outputs = @[Output(stream: newCaptureStream())]
     cfg.middleware = @[]
     cfg.middleware.add proc(record: var LogRecord): bool =
-      if record.extra.isNil:
-        record.extra = newJObject()
       record.extra["configured"] = %true
       true
   var logger = newLogger(name = "test")
@@ -77,6 +75,33 @@ test "successive configureLogging calls compose":
     cfg.outputs.add Output(stream: newCaptureStream())
   # Each call started from the previous committed state
   check outputs.len == 3
+
+test "records without fields carry no extra even with middleware":
+  setupTest()
+  configureLogging(cfg):
+    cfg.middleware.add proc(record: var LogRecord): bool = true
+  var logger = newLogger(name = "test")
+  logger.info("plain")
+  logger.info("with", field=1)
+  check captured.len == 2
+  check not parseJson(captured[0]).hasKey("extra")
+  check parseJson(captured[1])["extra"]["field"].getInt() == 1
+
+test "scratch extra is not shared between records":
+  setupTest()
+  configureLogging(cfg):
+    cfg.middleware.add proc(record: var LogRecord): bool =
+      if record.message == "mark":
+        record.extra["marked"] = %true
+      true
+  var logger = newLogger(name = "test")
+  logger.info("plain one")
+  logger.info("mark")
+  logger.info("plain two")
+  check captured.len == 3
+  check not parseJson(captured[0]).hasKey("extra")
+  check parseJson(captured[1])["extra"]["marked"].getBool()
+  check not parseJson(captured[2]).hasKey("extra")
 
 test "rate limiter allows burst then suppresses":
   setupTest()
@@ -126,8 +151,6 @@ test "middleware mutation does not leak into logger extra":
   setupTest()
   configureLogging(cfg):
     cfg.middleware.add proc(record: var LogRecord): bool =
-      if record.extra.isNil:
-        record.extra = newJObject()
       record.extra["injected"] = %"per-message"
       true
   var logger = newLogger(name = "test", extra = %* {"requestId": "abc"})
