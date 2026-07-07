@@ -1,1 +1,19 @@
+# Build artifacts
 /lumber
+/demo
+/demo_bin
+demos/*
+!demos/*.nim
+tests/test_*
+!tests/test_*.nim
+/tests/test1
+benchmarks/*
+!benchmarks/*.nim
+
+# Log files (demos and local runs)
+*.log
+*.log.*
+
+# Local scratch
+/diff.patch
+/prompt.txt

@@ -1,3 +1,12 @@
+## The full pipeline under load: configureLogging with an async console
+## stream, a size-rotated file, and an error-only file, plus child loggers,
+## a timing block, and a 250k-message burst to exercise rotation and the
+## async writer. Writes demo.log (rotated) and error.log in the current
+## directory.
+##
+## Run:
+##   nim r demos/full.nim | ./lumber --pretty
+
 import ../src/lumber
 import std/[json, streams]
 

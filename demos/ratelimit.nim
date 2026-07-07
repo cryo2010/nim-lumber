@@ -1,3 +1,10 @@
+## Rate-limiter middleware: bursts beyond maxBurst are dropped, and the
+## first message after the window resets carries a `suppressed` count of
+## what was dropped.
+##
+## Run:
+##   nim r demos/ratelimit.nim | ./lumber --pretty
+
 import std/os
 import ../src/lumber
 import ../src/lumber/middleware
