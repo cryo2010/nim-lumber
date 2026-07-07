@@ -202,6 +202,24 @@ test "sampler logs 1 in N":
   # Should log messages 1, 6, 11, 16 (counter mod 5 == 1)
   check captured.len == 4
 
+test "sampler with rate 1 logs everything":
+  setupTest()
+  configureLogging(cfg):
+    cfg.middleware.add newSampler(rate = 1)
+  var logger = newLogger(name = "test")
+  for i in 0 ..< 10:
+    logger.info("msg")
+  check captured.len == 10
+
+test "level sampler with rate 1 logs everything":
+  setupTest()
+  configureLogging(cfg):
+    cfg.middleware.add newLevelSampler(level = LogLevel.DEBUG, rate = 1)
+  var logger = newLogger(name = "test")
+  for i in 0 ..< 10:
+    logger.debug("msg")
+  check captured.len == 10
+
 test "level sampler passes high levels through":
   setupTest()
   configureLogging(cfg):
