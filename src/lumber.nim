@@ -42,6 +42,10 @@ type
     outputs*: seq[Output]
 
 var middleware: seq[LogMiddleware] = @[]
+# Empty JObject handed to middleware when a record has no extra, so
+# middleware never sees nil; reused across records until one writes to it.
+# Guarded by writeLock.
+var scratchExtra = newJObject()
 var outputs*: seq[Output] = @[Output(stream: newFileStream(stdout))]
 var context* {.threadvar.}: JsonNode
 var writeLock: Lock
@@ -252,8 +256,25 @@ proc writeLog*(logger: Logger, level: LogLevel, filename: string, line: int,
     extra: extra
   )
   withLock writeLock:
-    for mw in middleware:
-      if not mw(record):
+    if middleware.len > 0:
+      # Middleware always sees a JObject in record.extra so it can add
+      # fields without nil checks. The scratch object is reused across
+      # records while no middleware touches it (guarded by writeLock).
+      var usedScratch = false
+      if record.extra.isNil:
+        record.extra = scratchExtra
+        usedScratch = true
+      var keep = true
+      for mw in middleware:
+        if not mw(record):
+          keep = false
+          break
+      if usedScratch and record.extra == scratchExtra:
+        if scratchExtra.len == 0:
+          record.extra = nil  # untouched; keep the scratch for reuse
+        else:
+          scratchExtra = newJObject()  # donated to this record
+      if not keep:
         return
     # Re-parse level only if middleware may have changed it
     let outLevel = if record.level == levelStr: level
@@ -272,7 +293,7 @@ proc writeLog*(logger: Logger, level: LogLevel, filename: string, line: int,
     buf.add ",\"message\":\""
     buf.escapeJsonStr(record.message)
     buf.add "\""
-    if not record.extra.isNil and record.extra.kind == JObject:
+    if not record.extra.isNil and record.extra.kind == JObject and record.extra.len > 0:
       buf.add ",\"extra\":"
       buf.add $record.extra
     buf.add "}"

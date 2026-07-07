@@ -57,8 +57,6 @@ test "middleware can enrich records":
     cfg.middleware = @[]
   configureLogging(cfg):
     cfg.middleware.add proc(record: var LogRecord): bool =
-      if record.extra.isNil:
-        record.extra = newJObject()
       record.extra["env"] = %"test"
       true
   var logger = newLogger(name = "test")

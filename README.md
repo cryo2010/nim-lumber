@@ -401,8 +401,6 @@ Middleware functions receive a mutable `LogRecord` and return `true` to continue
 configureLogging(cfg):
   # Enrich every log line
   cfg.middleware.add proc(record: var LogRecord): bool =
-    if record.extra.isNil:
-      record.extra = newJObject()
     record.extra["env"] = %"production"
     true
 
@@ -418,13 +416,13 @@ logger.debug("cache miss")  # suppressed by the second middleware
 #### Output (the INFO line is enriched with `env`; the DEBUG line is suppressed):
 
 ```json
-{"timestamp":"2026-07-07T03:18:44.773Z","level":"INFO","name":"api","filename":"app.nim","line":16,"message":"request served","extra":{"env":"production"}}
+{"timestamp":"2026-07-07T05:05:04.856Z","level":"INFO","name":"api","filename":"app.nim","line":14,"message":"request served","extra":{"env":"production"}}
 ```
 
 #### Piped through `lumber --pretty`:
 
 ```
-2026-07-06T20:18:44.773-07:00 PDT [INFO ] (app.nim:16) api: request served
+2026-07-06T22:05:04.856-07:00 PDT [INFO ] (app.nim:14) api: request served
   env: "production"
 ```
 
@@ -440,6 +438,8 @@ type LogRecord* = object
   message*: string
   extra*: JsonNode
 ```
+
+`record.extra` is never nil while middleware runs: records without fields receive an empty JSON object, so middleware can add fields without a nil check. Records whose object is still empty after the chain are serialized without an `extra` key.
 
 Middleware is configured together with outputs in a `configureLogging` block via `cfg.middleware`; any seq operation works (append, remove, reorder, or replace the whole chain). See [Outputs and Routing](#outputs-and-routing) for the commit semantics.
 
@@ -809,8 +809,6 @@ configureLogging(cfg):
     Output(stream: newFileStream("error.log", fmAppend), level: LogLevel.ERROR),
   ]
   cfg.middleware.add proc(record: var LogRecord): bool =
-    if record.extra.isNil:
-      record.extra = newJObject()
     record.extra["env"] = %"production"
     true
 
@@ -839,35 +837,35 @@ for o in outputs:
 ### Output (also written to `app.log`; ERROR and FATAL additionally go to `error.log`):
 
 ```json
-{"timestamp":"2026-07-07T02:09:34.458Z","level":"INFO","name":"demo","filename":"demo.nim","line":26,"message":"Starting up","extra":{"service":"demo-api","env":"production"}}
-{"timestamp":"2026-07-07T02:09:34.458Z","level":"DEBUG","name":"demo","filename":"demo.nim","line":27,"message":"Loading config for User(name: \"Admin\", age: 35)","extra":{"service":"demo-api","env":"production"}}
-{"timestamp":"2026-07-07T02:09:34.458Z","level":"INFO","name":"demo","filename":"demo.nim","line":30,"message":"Server listening on port 8080","extra":{"service":"demo-api","requestId":"req-7f3a","userId":42,"env":"production"}}
-{"timestamp":"2026-07-07T02:09:34.459Z","level":"WARN","name":"demo","filename":"demo.nim","line":31,"message":"Disk usage at 92%","extra":{"service":"demo-api","requestId":"req-7f3a","userId":42,"env":"production"}}
-{"timestamp":"2026-07-07T02:09:34.459Z","level":"INFO","name":"demo","filename":"demo.nim","line":34,"message":"Request handled","extra":{"service":"demo-api","requestId":"req-7f3a","userId":42,"status":200,"latency":42,"path":"/api/users","env":"production"}}
-{"timestamp":"2026-07-07T02:09:34.459Z","level":"ERROR","name":"db","filename":"demo.nim","line":37,"message":"Failed to connect to database","extra":{"service":"demo-api","requestId":"req-7f3a","userId":42,"host":"db.local","port":5432,"env":"production"}}
-{"timestamp":"2026-07-07T02:09:34.459Z","level":"FATAL","name":"demo","filename":"demo.nim","line":39,"message":"Shutting down","extra":{"service":"demo-api","env":"production"}}
+{"timestamp":"2026-07-07T05:05:05.688Z","level":"INFO","name":"demo","filename":"demo.nim","line":24,"message":"Starting up","extra":{"service":"demo-api","env":"production"}}
+{"timestamp":"2026-07-07T05:05:05.688Z","level":"DEBUG","name":"demo","filename":"demo.nim","line":25,"message":"Loading config for User(name: \"Admin\", age: 35)","extra":{"service":"demo-api","env":"production"}}
+{"timestamp":"2026-07-07T05:05:05.688Z","level":"INFO","name":"demo","filename":"demo.nim","line":28,"message":"Server listening on port 8080","extra":{"service":"demo-api","requestId":"req-7f3a","userId":42,"env":"production"}}
+{"timestamp":"2026-07-07T05:05:05.688Z","level":"WARN","name":"demo","filename":"demo.nim","line":29,"message":"Disk usage at 92%","extra":{"service":"demo-api","requestId":"req-7f3a","userId":42,"env":"production"}}
+{"timestamp":"2026-07-07T05:05:05.688Z","level":"INFO","name":"demo","filename":"demo.nim","line":32,"message":"Request handled","extra":{"service":"demo-api","requestId":"req-7f3a","userId":42,"status":200,"latency":42,"path":"/api/users","env":"production"}}
+{"timestamp":"2026-07-07T05:05:05.688Z","level":"ERROR","name":"db","filename":"demo.nim","line":35,"message":"Failed to connect to database","extra":{"service":"demo-api","requestId":"req-7f3a","userId":42,"host":"db.local","port":5432,"env":"production"}}
+{"timestamp":"2026-07-07T05:05:05.688Z","level":"FATAL","name":"demo","filename":"demo.nim","line":37,"message":"Shutting down","extra":{"service":"demo-api","env":"production"}}
 ```
 
 #### Piped through `lumber --pretty`:
 
 ```
-2026-07-06T19:09:34.458-07:00 PDT [INFO ] (demo.nim:26) demo: Starting up
+2026-07-06T22:05:05.688-07:00 PDT [INFO ] (demo.nim:24) demo: Starting up
   service: "demo-api"
   env: "production"
-2026-07-06T19:09:34.458-07:00 PDT [DEBUG] (demo.nim:27) demo: Loading config for User(name: "Admin", age: 35)
+2026-07-06T22:05:05.688-07:00 PDT [DEBUG] (demo.nim:25) demo: Loading config for User(name: "Admin", age: 35)
   service: "demo-api"
   env: "production"
-2026-07-06T19:09:34.458-07:00 PDT [INFO ] (demo.nim:30) demo: Server listening on port 8080
-  service: "demo-api"
-  requestId: "req-7f3a"
-  userId: 42
-  env: "production"
-2026-07-06T19:09:34.459-07:00 PDT [WARN ] (demo.nim:31) demo: Disk usage at 92%
+2026-07-06T22:05:05.688-07:00 PDT [INFO ] (demo.nim:28) demo: Server listening on port 8080
   service: "demo-api"
   requestId: "req-7f3a"
   userId: 42
   env: "production"
-2026-07-06T19:09:34.459-07:00 PDT [INFO ] (demo.nim:34) demo: Request handled
+2026-07-06T22:05:05.688-07:00 PDT [WARN ] (demo.nim:29) demo: Disk usage at 92%
+  service: "demo-api"
+  requestId: "req-7f3a"
+  userId: 42
+  env: "production"
+2026-07-06T22:05:05.688-07:00 PDT [INFO ] (demo.nim:32) demo: Request handled
   service: "demo-api"
   requestId: "req-7f3a"
   userId: 42
@@ -875,14 +873,14 @@ for o in outputs:
   latency: 42
   path: "/api/users"
   env: "production"
-2026-07-06T19:09:34.459-07:00 PDT [ERROR] (demo.nim:37) db: Failed to connect to database
+2026-07-06T22:05:05.688-07:00 PDT [ERROR] (demo.nim:35) db: Failed to connect to database
   service: "demo-api"
   requestId: "req-7f3a"
   userId: 42
   host: "db.local"
   port: 5432
   env: "production"
-2026-07-06T19:09:34.459-07:00 PDT [FATAL] (demo.nim:39) demo: Shutting down
+2026-07-06T22:05:05.688-07:00 PDT [FATAL] (demo.nim:37) demo: Shutting down
   service: "demo-api"
   env: "production"
 ```

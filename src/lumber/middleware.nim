@@ -32,8 +32,6 @@ proc newRateLimiter*(window: float = 1.0, maxBurst: int = 5): LogMiddleware =
     if count <= maxBurst:
       let suppressed = dropped.getOrDefault(key, 0)
       if suppressed > 0:
-        if record.extra.isNil:
-          record.extra = newJObject()
         record.extra["suppressed"] = %suppressed
         dropped.del(key)
       return true
@@ -79,7 +77,7 @@ proc newRedactor*(keys: seq[string] = @[], placeholder: string = "[REDACTED]"): 
   ## If `keys` is provided, it completely overrides the defaults.
   let redactKeys = if keys.len > 0: keys else: defaultRedactKeys
   result = proc(record: var LogRecord): bool =
-    if not record.extra.isNil and record.extra.kind == JObject:
+    if record.extra.kind == JObject:
       for key in redactKeys:
         if record.extra.hasKey(key):
           record.extra[key] = %placeholder
@@ -91,7 +89,7 @@ proc newPatternRedactor*(pattern: Regex2, placeholder: string = "[REDACTED]"): L
   ## Useful for redacting credit card numbers, API keys, emails, etc.
   result = proc(record: var LogRecord): bool =
     record.message = record.message.replace(pattern, placeholder)
-    if not record.extra.isNil and record.extra.kind == JObject:
+    if record.extra.kind == JObject:
       for key, val in record.extra.pairs:
         if val.kind == JString:
           let replaced = val.getStr().replace(pattern, placeholder)
