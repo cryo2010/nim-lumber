@@ -3,7 +3,7 @@
 ## Compile with `-d:lumberLevel=INFO` to set the minimum log level.
 ## Log calls below the compile-time threshold are completely eliminated.
 
-import std/[jsonutils, times, macros, strutils, os, streams, exitprocs, locks, atomics]
+import std/[jsonutils, times, monotimes, macros, strutils, os, streams, exitprocs, locks, atomics]
 import std/json
 export json
 
@@ -452,21 +452,24 @@ macro error*(logger: typed, args: varargs[untyped]): untyped =
 macro fatal*(logger: typed, args: varargs[untyped]): untyped =
   genLogCall(LogLevel.FATAL, logger, args)
 
-template time*(logger: Logger, message: string, body: untyped) =
-  let start = cpuTime()
-  body
-  let durationMs = (cpuTime() - start) * 1000.0
-  let fields = newJObject()
-  fields["duration_ms"] = %durationMs
-  writeLog(logger, LogLevel.INFO, instantiationInfo().filename, instantiationInfo().line, message, fields)
+proc elapsedMs(start: MonoTime): float =
+  (getMonoTime() - start).inNanoseconds.float / 1_000_000.0
 
 template time*(logger: Logger, level: LogLevel, message: string, body: untyped) =
-  let start = cpuTime()
+  ## Runs `body` and logs its wall-clock duration at `level` with a
+  ## `duration_ms` field.
+  let start = getMonoTime()
   body
-  let durationMs = (cpuTime() - start) * 1000.0
+  let durationMs = elapsedMs(start)
   let fields = newJObject()
   fields["duration_ms"] = %durationMs
-  writeLog(logger, level, instantiationInfo().filename, instantiationInfo().line, message, fields)
+  let info = instantiationInfo()
+  writeLog(logger, level, info.filename, info.line, message, fields)
+
+template time*(logger: Logger, message: string, body: untyped) =
+  ## Runs `body` and logs its wall-clock duration at INFO level with a
+  ## `duration_ms` field.
+  time(logger, LogLevel.INFO, message, body)
 
 proc initLogger*(callerInfo: tuple[filename: string, line: int, column: int],
                   name: string, extra: JsonNode): Logger =
