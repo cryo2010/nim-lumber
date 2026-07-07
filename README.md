@@ -35,7 +35,7 @@ var logger = newLogger()
 logger.info("Hello, world!")
 ```
 
-> **Tip:** If you prefer namespaced access (`lumber.outputs`, `lumber.use`, etc.), use `from lumber import nil`. All examples below use plain `import lumber` for brevity.
+> **Tip:** If you prefer namespaced access (`lumber.outputs`, `lumber.newLogger`, etc.), use `from lumber import nil`. All examples below use plain `import lumber` for brevity.
 
 #### Output:
 
@@ -398,35 +398,33 @@ Priority order (highest wins): message fields > logger extra > thread-local cont
 Middleware functions receive a mutable `LogRecord` and return `true` to continue the chain or `false` to suppress the record.
 
 ```nim
-# Enrich every log line
-use proc(record: var LogRecord): bool =
-  if record.extra.isNil:
-    record.extra = newJObject()
-  record.extra["env"] = %"production"
-  true
+configureLogging(cfg):
+  # Enrich every log line
+  cfg.middleware.add proc(record: var LogRecord): bool =
+    if record.extra.isNil:
+      record.extra = newJObject()
+    record.extra["env"] = %"production"
+    true
 
-# Suppress debug logs at runtime
-use proc(record: var LogRecord): bool =
-  record.level != "DEBUG"
+  # Suppress debug logs at runtime
+  cfg.middleware.add proc(record: var LogRecord): bool =
+    record.level != "DEBUG"
 
 var logger = newLogger(name = "api")
 logger.info("request served")
 logger.debug("cache miss")  # suppressed by the second middleware
-
-# Clear all middleware
-clearMiddleware()
 ```
 
 #### Output (the INFO line is enriched with `env`; the DEBUG line is suppressed):
 
 ```json
-{"timestamp":"2026-07-06T20:44:54.172Z","level":"INFO","name":"api","filename":"app.nim","line":15,"message":"request served","extra":{"env":"production"}}
+{"timestamp":"2026-07-07T03:18:44.773Z","level":"INFO","name":"api","filename":"app.nim","line":16,"message":"request served","extra":{"env":"production"}}
 ```
 
 #### Piped through `lumber --pretty`:
 
 ```
-2026-07-06T13:44:54.172-07:00 PDT [INFO ] (app.nim:15) api: request served
+2026-07-06T20:18:44.773-07:00 PDT [INFO ] (app.nim:16) api: request served
   env: "production"
 ```
 
@@ -443,6 +441,8 @@ type LogRecord* = object
   extra*: JsonNode
 ```
 
+Middleware is configured together with outputs in a `configureLogging` block via `cfg.middleware`; any seq operation works (append, remove, reorder, or replace the whole chain). See [Outputs and Routing](#outputs-and-routing) for the commit semantics.
+
 ### Built-in Middleware
 
 Import `lumber/middleware` for ready-made middleware:
@@ -452,8 +452,9 @@ import lumber
 import lumber/middleware
 import std/os
 
-# Rate limiter: allow max 5 messages per second from the same source location
-use newRateLimiter(window = 1.0, maxBurst = 5)
+configureLogging(cfg):
+  # Rate limiter: allow max 5 messages per second from the same source location
+  cfg.middleware.add newRateLimiter(window = 1.0, maxBurst = 5)
 
 var logger = newLogger(name = "api")
 for i in 1 .. 13:
@@ -465,46 +466,46 @@ for i in 1 .. 13:
 Events 6-12 are dropped. When the window expires, the next emitted message from that source location includes a `suppressed` field with the count of dropped messages:
 
 ```json
-{"timestamp":"2026-07-06T20:46:30.041Z","level":"INFO","name":"api","filename":"app.nim","line":11,"message":"Event 1"}
-{"timestamp":"2026-07-06T20:46:30.042Z","level":"INFO","name":"api","filename":"app.nim","line":11,"message":"Event 2"}
-{"timestamp":"2026-07-06T20:46:30.042Z","level":"INFO","name":"api","filename":"app.nim","line":11,"message":"Event 3"}
-{"timestamp":"2026-07-06T20:46:30.042Z","level":"INFO","name":"api","filename":"app.nim","line":11,"message":"Event 4"}
-{"timestamp":"2026-07-06T20:46:30.042Z","level":"INFO","name":"api","filename":"app.nim","line":11,"message":"Event 5"}
-{"timestamp":"2026-07-06T20:46:31.143Z","level":"INFO","name":"api","filename":"app.nim","line":11,"message":"Event 13","extra":{"suppressed":7}}
+{"timestamp":"2026-07-07T03:18:46.040Z","level":"INFO","name":"api","filename":"app.nim","line":13,"message":"Event 1"}
+{"timestamp":"2026-07-07T03:18:46.040Z","level":"INFO","name":"api","filename":"app.nim","line":13,"message":"Event 2"}
+{"timestamp":"2026-07-07T03:18:46.040Z","level":"INFO","name":"api","filename":"app.nim","line":13,"message":"Event 3"}
+{"timestamp":"2026-07-07T03:18:46.040Z","level":"INFO","name":"api","filename":"app.nim","line":13,"message":"Event 4"}
+{"timestamp":"2026-07-07T03:18:46.040Z","level":"INFO","name":"api","filename":"app.nim","line":13,"message":"Event 5"}
+{"timestamp":"2026-07-07T03:18:47.146Z","level":"INFO","name":"api","filename":"app.nim","line":13,"message":"Event 13","extra":{"suppressed":7}}
 ```
 
 #### Piped through `lumber --pretty`:
 
 ```
-2026-07-06T13:46:30.041-07:00 PDT [INFO ] (app.nim:11) api: Event 1
-2026-07-06T13:46:30.042-07:00 PDT [INFO ] (app.nim:11) api: Event 2
-2026-07-06T13:46:30.042-07:00 PDT [INFO ] (app.nim:11) api: Event 3
-2026-07-06T13:46:30.042-07:00 PDT [INFO ] (app.nim:11) api: Event 4
-2026-07-06T13:46:30.042-07:00 PDT [INFO ] (app.nim:11) api: Event 5
-2026-07-06T13:46:31.143-07:00 PDT [INFO ] (app.nim:11) api: Event 13
+2026-07-06T20:18:46.040-07:00 PDT [INFO ] (app.nim:13) api: Event 1
+2026-07-06T20:18:46.040-07:00 PDT [INFO ] (app.nim:13) api: Event 2
+2026-07-06T20:18:46.040-07:00 PDT [INFO ] (app.nim:13) api: Event 3
+2026-07-06T20:18:46.040-07:00 PDT [INFO ] (app.nim:13) api: Event 4
+2026-07-06T20:18:46.040-07:00 PDT [INFO ] (app.nim:13) api: Event 5
+2026-07-06T20:18:47.146-07:00 PDT [INFO ] (app.nim:13) api: Event 13
   suppressed: 7
 ```
 
-The remaining built-in middleware (the pattern redactor takes a compiled regex, so `import regex` where you use it):
+The remaining built-in middleware, added inside a `configureLogging` block (the pattern redactor takes a compiled regex, so `import regex` alongside it):
 
 ```nim
 # Sampler: log 1 in every 100 messages
-use newSampler(rate = 100)
+cfg.middleware.add newSampler(rate = 100)
 
 # Level sampler: sample DEBUG/TRACE at 1-in-50, always pass WARN+
-use newLevelSampler(level = LogLevel.DEBUG, rate = 50)
+cfg.middleware.add newLevelSampler(level = LogLevel.DEBUG, rate = 50)
 
 # Redact sensitive fields using built-in defaults
-use newRedactor()
+cfg.middleware.add newRedactor()
 
 # Override with a custom key list (replaces defaults entirely)
-use newRedactor(@["password", "token", "ssn"])
+cfg.middleware.add newRedactor(@["password", "token", "ssn"])
 
 # Redact values matching a regex pattern (e.g. credit card numbers)
-use newPatternRedactor(re2"\d{4}-\d{4}-\d{4}-\d{4}")
+cfg.middleware.add newPatternRedactor(re2"\d{4}-\d{4}-\d{4}-\d{4}")
 
 # Custom placeholder
-use newRedactor(@["apiKey"], placeholder = "***")
+cfg.middleware.add newRedactor(@["apiKey"], placeholder = "***")
 ```
 
 Default redacted keys: `api_key`, `api_secret`, `apiKey`, `apiSecret`, `authorization`, `card_number`, `cardNumber`, `cookie`, `credit_card`, `creditCard`, `cvv`, `passwd`, `password`, `pin`, `secret`, `ssn`, `token`.
@@ -513,19 +514,24 @@ Default redacted keys: `api_key`, `api_secret`, `apiKey`, `apiSecret`, `authoriz
 
 Each output has a `stream`, an optional `level` filter, and an optional `names` filter. By default, logs write to stdout at all levels.
 
+Reconfigure logging with `configureLogging`. The first argument names the variable that holds a snapshot of the current configuration (outputs and middleware) inside the block; changes are committed atomically when the block finishes, so loggers on other threads never observe a half-applied configuration. If the block raises, nothing is committed. Outputs dropped by the new configuration are flushed (but not closed).
+
+Concurrent `configureLogging` calls serialize, each seeing the previous one's committed state, and logging is never blocked while a configuration block runs. Two rules: a block must not call `configureLogging` itself (this raises a `Defect`, since nested commits would silently lose updates), and reconfiguration should happen from long-lived threads, typically the main thread. The second rule comes from Nim's default memory management (ORC), which registers reference bookkeeping in thread-local state: a short-lived thread that replaces outputs or middleware drops the old references on its own heap and can corrupt cycle collection after the thread exits.
+
 ```nim
 import std/streams
 
-outputs = @[
-  # Console: all levels, all loggers
-  Output(stream: newFileStream(stdout)),
+configureLogging(cfg):
+  cfg.outputs = @[
+    # Console: all levels, all loggers
+    Output(stream: newFileStream(stdout)),
 
-  # File: only ERROR and above
-  Output(stream: newFileStream("error.log", fmAppend), level: LogLevel.ERROR),
+    # File: only ERROR and above
+    Output(stream: newFileStream("error.log", fmAppend), level: LogLevel.ERROR),
 
-  # File: only logs from the "db" logger
-  Output(stream: newFileStream("db.log", fmAppend), names: @["db"]),
-]
+    # File: only logs from the "db" logger
+    Output(stream: newFileStream("db.log", fmAppend), names: @["db"]),
+  ]
 ```
 
 The `Output` type:
@@ -574,18 +580,18 @@ Wrap any stream with `newBufferedStream` for high-throughput logging. Uses a hyb
 
 ```nim
 # Default settings (4KB buffer, flush every 1s or on ERROR+)
-outputs = @[Output(stream: newBufferedStream(newFileStream(stdout)))]
+Output(stream: newBufferedStream(newFileStream(stdout)))
 
 # Custom: 8KB buffer, flush every 500ms, immediate flush on WARN+
-outputs = @[Output(stream: newBufferedStream(
+Output(stream: newBufferedStream(
   newFileStream("app.log", fmAppend),
   maxSize = 8192,
   flushIntervalMs = 500,
   flushLevel = LogLevel.WARN
-))]
+))
 
 # Combine with rotating files
-outputs = @[Output(stream: newBufferedStream(newRollingFileStream("app.log")))]
+Output(stream: newBufferedStream(newRollingFileStream("app.log")))
 ```
 
 In benchmarks, buffered streams are ~1.5-2.3x faster than unbuffered, with the gap widening with more outputs.
@@ -595,11 +601,14 @@ In benchmarks, buffered streams are ~1.5-2.3x faster than unbuffered, with the g
 Wrap any stream with `newAsyncStream` for non-blocking I/O. Log calls push data onto a channel and return immediately; a background thread handles the writes.
 
 ```nim
-# Async console output
-outputs = @[Output(stream: newAsyncStream(newFileStream(stdout)))]
+configureLogging(cfg):
+  cfg.outputs = @[
+    # Async console output
+    Output(stream: newAsyncStream(newFileStream(stdout))),
 
-# Async rotating file
-outputs.add(Output(stream: newAsyncStream(newRollingFileStream("app.log"))))
+    # Async rotating file
+    Output(stream: newAsyncStream(newRollingFileStream("app.log"))),
+  ]
 
 # Close to flush and join the writer thread
 for o in outputs:
@@ -791,19 +800,19 @@ type
     name: string
     age: int
 
-# Async console + rotating file + error-only file
-outputs = @[
-  Output(stream: newAsyncStream(newFileStream(stdout))),
-  Output(stream: newRollingFileStream("app.log", maxBytes = 1_000_000, maxFiles = 3)),
-  Output(stream: newFileStream("error.log", fmAppend), level: LogLevel.ERROR),
-]
-
-# Add request context via middleware
-use proc(record: var LogRecord): bool =
-  if record.extra.isNil:
-    record.extra = newJObject()
-  record.extra["env"] = %"production"
-  true
+# Async console + rotating file + error-only file,
+# plus request context via middleware
+configureLogging(cfg):
+  cfg.outputs = @[
+    Output(stream: newAsyncStream(newFileStream(stdout))),
+    Output(stream: newRollingFileStream("app.log", maxBytes = 1_000_000, maxFiles = 3)),
+    Output(stream: newFileStream("error.log", fmAppend), level: LogLevel.ERROR),
+  ]
+  cfg.middleware.add proc(record: var LogRecord): bool =
+    if record.extra.isNil:
+      record.extra = newJObject()
+    record.extra["env"] = %"production"
+    true
 
 var logger = newLogger(extra = %* {"service": "demo-api"})
 var admin = User(name: "Admin", age: 35)
@@ -830,35 +839,35 @@ for o in outputs:
 ### Output (also written to `app.log`; ERROR and FATAL additionally go to `error.log`):
 
 ```json
-{"timestamp":"2026-07-06T20:44:57.230Z","level":"INFO","name":"demo","filename":"demo.nim","line":26,"message":"Starting up","extra":{"service":"demo-api","env":"production"}}
-{"timestamp":"2026-07-06T20:44:57.231Z","level":"DEBUG","name":"demo","filename":"demo.nim","line":27,"message":"Loading config for User(name: \"Admin\", age: 35)","extra":{"service":"demo-api","env":"production"}}
-{"timestamp":"2026-07-06T20:44:57.231Z","level":"INFO","name":"demo","filename":"demo.nim","line":30,"message":"Server listening on port 8080","extra":{"service":"demo-api","requestId":"req-7f3a","userId":42,"env":"production"}}
-{"timestamp":"2026-07-06T20:44:57.231Z","level":"WARN","name":"demo","filename":"demo.nim","line":31,"message":"Disk usage at 92%","extra":{"service":"demo-api","requestId":"req-7f3a","userId":42,"env":"production"}}
-{"timestamp":"2026-07-06T20:44:57.231Z","level":"INFO","name":"demo","filename":"demo.nim","line":34,"message":"Request handled","extra":{"service":"demo-api","requestId":"req-7f3a","userId":42,"status":200,"latency":42,"path":"/api/users","env":"production"}}
-{"timestamp":"2026-07-06T20:44:57.231Z","level":"ERROR","name":"db","filename":"demo.nim","line":37,"message":"Failed to connect to database","extra":{"service":"demo-api","requestId":"req-7f3a","userId":42,"host":"db.local","port":5432,"env":"production"}}
-{"timestamp":"2026-07-06T20:44:57.232Z","level":"FATAL","name":"demo","filename":"demo.nim","line":39,"message":"Shutting down","extra":{"service":"demo-api","env":"production"}}
+{"timestamp":"2026-07-07T02:09:34.458Z","level":"INFO","name":"demo","filename":"demo.nim","line":26,"message":"Starting up","extra":{"service":"demo-api","env":"production"}}
+{"timestamp":"2026-07-07T02:09:34.458Z","level":"DEBUG","name":"demo","filename":"demo.nim","line":27,"message":"Loading config for User(name: \"Admin\", age: 35)","extra":{"service":"demo-api","env":"production"}}
+{"timestamp":"2026-07-07T02:09:34.458Z","level":"INFO","name":"demo","filename":"demo.nim","line":30,"message":"Server listening on port 8080","extra":{"service":"demo-api","requestId":"req-7f3a","userId":42,"env":"production"}}
+{"timestamp":"2026-07-07T02:09:34.459Z","level":"WARN","name":"demo","filename":"demo.nim","line":31,"message":"Disk usage at 92%","extra":{"service":"demo-api","requestId":"req-7f3a","userId":42,"env":"production"}}
+{"timestamp":"2026-07-07T02:09:34.459Z","level":"INFO","name":"demo","filename":"demo.nim","line":34,"message":"Request handled","extra":{"service":"demo-api","requestId":"req-7f3a","userId":42,"status":200,"latency":42,"path":"/api/users","env":"production"}}
+{"timestamp":"2026-07-07T02:09:34.459Z","level":"ERROR","name":"db","filename":"demo.nim","line":37,"message":"Failed to connect to database","extra":{"service":"demo-api","requestId":"req-7f3a","userId":42,"host":"db.local","port":5432,"env":"production"}}
+{"timestamp":"2026-07-07T02:09:34.459Z","level":"FATAL","name":"demo","filename":"demo.nim","line":39,"message":"Shutting down","extra":{"service":"demo-api","env":"production"}}
 ```
 
 #### Piped through `lumber --pretty`:
 
 ```
-2026-07-06T13:44:57.230-07:00 PDT [INFO ] (demo.nim:26) demo: Starting up
+2026-07-06T19:09:34.458-07:00 PDT [INFO ] (demo.nim:26) demo: Starting up
   service: "demo-api"
   env: "production"
-2026-07-06T13:44:57.231-07:00 PDT [DEBUG] (demo.nim:27) demo: Loading config for User(name: "Admin", age: 35)
+2026-07-06T19:09:34.458-07:00 PDT [DEBUG] (demo.nim:27) demo: Loading config for User(name: "Admin", age: 35)
   service: "demo-api"
   env: "production"
-2026-07-06T13:44:57.231-07:00 PDT [INFO ] (demo.nim:30) demo: Server listening on port 8080
-  service: "demo-api"
-  requestId: "req-7f3a"
-  userId: 42
-  env: "production"
-2026-07-06T13:44:57.231-07:00 PDT [WARN ] (demo.nim:31) demo: Disk usage at 92%
+2026-07-06T19:09:34.458-07:00 PDT [INFO ] (demo.nim:30) demo: Server listening on port 8080
   service: "demo-api"
   requestId: "req-7f3a"
   userId: 42
   env: "production"
-2026-07-06T13:44:57.231-07:00 PDT [INFO ] (demo.nim:34) demo: Request handled
+2026-07-06T19:09:34.459-07:00 PDT [WARN ] (demo.nim:31) demo: Disk usage at 92%
+  service: "demo-api"
+  requestId: "req-7f3a"
+  userId: 42
+  env: "production"
+2026-07-06T19:09:34.459-07:00 PDT [INFO ] (demo.nim:34) demo: Request handled
   service: "demo-api"
   requestId: "req-7f3a"
   userId: 42
@@ -866,14 +875,14 @@ for o in outputs:
   latency: 42
   path: "/api/users"
   env: "production"
-2026-07-06T13:44:57.231-07:00 PDT [ERROR] (demo.nim:37) db: Failed to connect to database
+2026-07-06T19:09:34.459-07:00 PDT [ERROR] (demo.nim:37) db: Failed to connect to database
   service: "demo-api"
   requestId: "req-7f3a"
   userId: 42
   host: "db.local"
   port: 5432
   env: "production"
-2026-07-06T13:44:57.232-07:00 PDT [FATAL] (demo.nim:39) demo: Shutting down
+2026-07-06T19:09:34.459-07:00 PDT [FATAL] (demo.nim:39) demo: Shutting down
   service: "demo-api"
   env: "production"
 ```
