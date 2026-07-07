@@ -144,7 +144,7 @@ Child loggers inherit the parent's level.
 
 ### String Interpolation
 
-Use `{0}`, `{1}`, etc. to interpolate arguments into the message. Extra arguments are appended. Any type with a `$` operator works; objects are prefixed with their type name.
+Use `{0}`, `{1}`, etc. to interpolate arguments into the message. Extra arguments are appended. Any type with a `$` operator works; objects are prefixed with their type name. Placeholders are interpreted only in the message template; argument values are inserted verbatim, so data containing `{N}` cannot inject placeholders.
 
 ```nim
 logger.info("User {0} logged in from {1}", "alice", "10.0.0.1")

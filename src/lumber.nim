@@ -363,18 +363,40 @@ proc logKwarg[T](fields: JsonNode, key: string, val: T) =
     fields[key] = %val
 
 proc buildMessageFromSeq(args: seq[string]): string =
+  ## Interpolates `{N}` placeholders in the template (args[0]) with
+  ## args[N + 1]; arguments not referenced by a placeholder are appended,
+  ## space-separated. A single pass over the template only: argument
+  ## values are inserted verbatim and never rescanned, so data cannot
+  ## inject placeholders. Out-of-range or malformed placeholders stay
+  ## literal.
   if args.len == 0: return ""
   if args.len == 1: return args[0]
-  result = args[0]
-  var used: set[uint8] = {}
-  for i in 1 ..< args.len:
-    let placeholder = "{" & $(i - 1) & "}"
-    if placeholder in result:
-      result = result.replace(placeholder, args[i])
-      used.incl(uint8(i))
-  for i in 1 ..< args.len:
-    if uint8(i) notin used:
-      result &= " " & args[i]
+  let fmt = args[0]
+  result = newStringOfCap(fmt.len + 16)
+  var used = newSeq[bool](args.len)
+  var i = 0
+  while i < fmt.len:
+    if fmt[i] == '{' and i + 1 < fmt.len and fmt[i + 1] in {'0'..'9'}:
+      var j = i + 1
+      var idx = 0
+      var valid = true
+      while j < fmt.len and fmt[j] in {'0'..'9'}:
+        if valid:
+          idx = idx * 10 + (ord(fmt[j]) - ord('0'))
+          if idx >= args.len - 1:  # out of range; also caps the accumulator
+            valid = false
+        inc j
+      if valid and j < fmt.len and fmt[j] == '}':
+        result.add args[idx + 1]
+        used[idx + 1] = true
+        i = j + 1
+        continue
+    result.add fmt[i]
+    inc i
+  for k in 1 ..< args.len:
+    if not used[k]:
+      result.add ' '
+      result.add args[k]
 
 proc genLogCall(level: LogLevel, logger: NimNode, args: NimNode): NimNode =
   if level < CompileLogLevel:
