@@ -1,3 +1,10 @@
+## The basics: log levels, string interpolation, structured fields, and
+## automatic exception logging.
+##
+## Run (build the CLI first with `nimble buildProd` for the pretty version):
+##   nim r demos/minimal.nim
+##   nim r demos/minimal.nim | ./lumber --pretty
+
 import ../src/lumber
 
 type

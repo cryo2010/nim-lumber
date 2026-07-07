@@ -1,7 +1,11 @@
 ## Hammers the logging hot path from many threads at once, then verifies the
 ## output: every line must be intact JSON (no torn writes), per-thread
 ## sequence numbers must arrive in order, and withContext fields must never
-## leak between threads.
+## leak between threads. Writes and then verifies threads.log in the
+## current directory.
+##
+## Run:
+##   nim r demos/threads.nim
 
 import std/[os, streams, json]
 import ../src/lumber
