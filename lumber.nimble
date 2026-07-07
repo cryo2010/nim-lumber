@@ -25,6 +25,7 @@ task test, "Run the test suite":
   exec "nim c --hints:off --threads:on -r tests/test_logger.nim"
   exec "nim c --hints:off --threads:on -r tests/test_middleware.nim"
   exec "nim c --hints:off --threads:on -r tests/test_threading.nim"
+  exec "nim c --hints:off --threads:on -r tests/test_streams.nim"
 
 task setVersion, "Set the package version in lumber.nimble and src/lumber/version.nim (nimble setVersion X.Y.Z)":
   proc replaceLine(path, prefix, newLine: string) =
