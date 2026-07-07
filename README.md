@@ -9,25 +9,15 @@ A compile-time optimized JSON logger for Nim with a built-in CLI prettifier.
 
 ## Features
 
-- **Minimal dependencies** - the Nim standard library plus a single pure-Nim package ([regex](https://github.com/nitely/nim-regex)), compiled in statically; no C libraries or runtime dependencies
-- **Thread-safe** - safe for concurrent use from multiple threads
-- **Compile-time level filtering** - log calls below the threshold are eliminated from the binary entirely, with zero runtime cost
+- **Compile-time level filtering** - log calls below the threshold are eliminated from the binary entirely, with zero runtime cost; per-logger runtime levels handle the rest
 - **Structured JSON output** - every log line is valid JSON with timestamp, level, name, filename, line number, and message
-- **Structured messages** - named `key=value` arguments become discrete JSON fields, queryable by log aggregators
+- **Structured messages** - named `key=value` arguments become discrete JSON fields, queryable by log aggregators; `{0}`-style placeholders interpolate positional arguments
 - **Exception logging** - pass any `ref Exception` and lumber extracts the message, type, and stack trace automatically
-- **String interpolation** - `{0}`, `{1}` placeholders in messages are replaced with stringified arguments
-- **Type-aware object formatting** - object types are automatically prefixed with their type name (e.g. `User(name: "Dude", age: 40)`)
-- **Runtime level filtering** - per-logger level short-circuits immediately
-- **Child loggers** - create derived loggers that inherit and extend the parent's context
-- **Extra fields** - attach structured metadata to loggers, merged into every log line under an `"extra"` key
-- **Thread-local context** - `withContext` attaches ambient fields to all loggers in the current call stack
-- **Middleware** - a chain of functions that can enrich, transform, or suppress log records at runtime
-- **Built-in middleware** - rate limiter, sampler, level-aware sampler, and redaction for production use
-- **Multiple output streams** - write to stdout, files, or any custom `Stream` simultaneously
-- **Rotating file streams** - built-in size-based and time-based file rotation
-- **Buffered streams** - hybrid flush strategy (size, interval, and level threshold) for high throughput
-- **Async stream wrapper** - non-blocking I/O via a background writer thread
-- **Graceful shutdown** - automatic flush on exit, opt-in signal handling for SIGTERM/SIGINT
+- **Contextual logging** - attach fields per logger, inherit them through child loggers, or scope them to a call stack with thread-local `withContext`
+- **Middleware** - enrich, transform, or suppress log records at runtime; rate limiter, sampler, and redaction included
+- **Flexible outputs** - write to stdout, files, or any custom `Stream` simultaneously, with built-in size/time rotation, buffering, a background-thread async writer, and automatic flush on exit
+- **Thread-safe** - safe for concurrent use from multiple threads
+- **Minimal dependencies** - the Nim standard library plus a single pure-Nim package ([regex](https://github.com/nitely/nim-regex)), compiled in statically; no C libraries or runtime dependencies
 - **CLI prettifier** - pipe JSON logs through the `lumber` binary for colored, human-readable output with level filtering, field filtering, timezone support, and customizable format/colors via TOML config
 
 ## Installation
@@ -47,10 +37,16 @@ logger.info("Hello, world!")
 
 > **Tip:** If you prefer namespaced access (`lumber.outputs`, `lumber.use`, etc.), use `from lumber import nil`. All examples below use plain `import lumber` for brevity.
 
-Output:
+#### Output:
 
 ```json
-{"timestamp":"2026-07-03T00:00:00Z","level":"INFO","name":"mymodule","filename":"mymodule.nim","line":4,"message":"Hello, world!"}
+{"timestamp":"2026-07-06T20:44:45.742Z","level":"INFO","name":"mymodule","filename":"mymodule.nim","line":4,"message":"Hello, world!"}
+```
+
+#### Piped through the `lumber` CLI prettifier:
+
+```
+2026-07-06T13:44:45.742-07:00 PDT [INFO ] (mymodule.nim:4) mymodule: Hello, world!
 ```
 
 ## Compile-Time Level Filtering
@@ -78,7 +74,7 @@ var logger = newLogger()
 # Named logger with extra context (JsonNode)
 var logger = newLogger(name = "api", extra = %* {"service": "my-app"})
 
-# Extra also accepts Nim objects — fields are serialized automatically
+# Extra also accepts Nim objects; fields are serialized automatically
 type AppContext = object
   service: string
   version: string
@@ -97,6 +93,28 @@ logger.error("Error occurred")
 logger.fatal("Fatal error")
 ```
 
+#### Output:
+
+```json
+{"timestamp":"2026-07-06T20:44:46.592Z","level":"TRACE","name":"app","filename":"app.nim","line":4,"message":"Detailed tracing info"}
+{"timestamp":"2026-07-06T20:44:46.592Z","level":"DEBUG","name":"app","filename":"app.nim","line":5,"message":"Debug information"}
+{"timestamp":"2026-07-06T20:44:46.592Z","level":"INFO","name":"app","filename":"app.nim","line":6,"message":"General information"}
+{"timestamp":"2026-07-06T20:44:46.592Z","level":"WARN","name":"app","filename":"app.nim","line":7,"message":"Warning"}
+{"timestamp":"2026-07-06T20:44:46.592Z","level":"ERROR","name":"app","filename":"app.nim","line":8,"message":"Error occurred"}
+{"timestamp":"2026-07-06T20:44:46.592Z","level":"FATAL","name":"app","filename":"app.nim","line":9,"message":"Fatal error"}
+```
+
+#### Piped through `lumber`:
+
+```
+2026-07-06T13:44:46.592-07:00 PDT [TRACE] (app.nim:4) app: Detailed tracing info
+2026-07-06T13:44:46.592-07:00 PDT [DEBUG] (app.nim:5) app: Debug information
+2026-07-06T13:44:46.592-07:00 PDT [INFO ] (app.nim:6) app: General information
+2026-07-06T13:44:46.592-07:00 PDT [WARN ] (app.nim:7) app: Warning
+2026-07-06T13:44:46.592-07:00 PDT [ERROR] (app.nim:8) app: Error occurred
+2026-07-06T13:44:46.592-07:00 PDT [FATAL] (app.nim:9) app: Fatal error
+```
+
 ### Runtime Level Filtering
 
 Each logger has a `level` field that short-circuits before building the log record, running middleware, or serializing JSON.
@@ -108,15 +126,49 @@ logger.info("skipped")        # no work done
 logger.error("processed")     # goes through normally
 ```
 
+#### Output (only the ERROR line is emitted):
+
+```json
+{"timestamp":"2026-07-06T20:44:47.409Z","level":"ERROR","name":"api","filename":"app.nim","line":6,"message":"processed"}
+```
+
+#### Piped through `lumber`:
+
+```
+2026-07-06T13:44:47.409-07:00 PDT [ERROR] (app.nim:6) api: processed
+```
+
 Child loggers inherit the parent's level.
 
 ### String Interpolation
 
-Use `{0}`, `{1}`, etc. to interpolate arguments into the message. Extra arguments are appended.
+Use `{0}`, `{1}`, etc. to interpolate arguments into the message. Extra arguments are appended. Any type with a `$` operator works; objects are prefixed with their type name.
 
 ```nim
-logger.info("User {0} logged in from {1}", username, ipAddr)
-logger.info("Values:", 1, 2, 3)  # "Values: 1 2 3"
+logger.info("User {0} logged in from {1}", "alice", "10.0.0.1")
+logger.info("Values:", 1, 2, 3)
+
+type User = object
+  name: string
+  age: int
+
+logger.info("Found {0}", User(name: "Dude", age: 40))
+```
+
+#### Output:
+
+```json
+{"timestamp":"2026-07-06T20:44:48.243Z","level":"INFO","name":"api","filename":"app.nim","line":4,"message":"User alice logged in from 10.0.0.1"}
+{"timestamp":"2026-07-06T20:44:48.243Z","level":"INFO","name":"api","filename":"app.nim","line":5,"message":"Values: 1 2 3"}
+{"timestamp":"2026-07-06T20:44:48.243Z","level":"INFO","name":"api","filename":"app.nim","line":11,"message":"Found User(name: \"Dude\", age: 40)"}
+```
+
+#### Piped through `lumber`:
+
+```
+2026-07-06T13:44:48.243-07:00 PDT [INFO ] (app.nim:4) api: User alice logged in from 10.0.0.1
+2026-07-06T13:44:48.243-07:00 PDT [INFO ] (app.nim:5) api: Values: 1 2 3
+2026-07-06T13:44:48.243-07:00 PDT [INFO ] (app.nim:11) api: Found User(name: "Dude", age: 40)
 ```
 
 ### Structured Messages
@@ -124,12 +176,29 @@ logger.info("Values:", 1, 2, 3)  # "Values: 1 2 3"
 Named arguments become discrete fields in the `extra` JSON object, keeping them queryable by log aggregators rather than buried in a text string.
 
 ```nim
+let reqId = "req-abc"
 logger.info("User logged in", user="alice", ip="10.0.0.1")
-# extra: {"user": "alice", "ip": "10.0.0.1"}
 
 # Mix positional interpolation with named fields
 logger.info("Request {0} completed", reqId, status=200, latency=42)
-# message: "Request req-abc completed", extra: {"status": 200, "latency": 42}
+```
+
+#### Output:
+
+```json
+{"timestamp":"2026-07-06T20:44:49.081Z","level":"INFO","name":"api","filename":"app.nim","line":5,"message":"User logged in","extra":{"user":"alice","ip":"10.0.0.1"}}
+{"timestamp":"2026-07-06T20:44:49.082Z","level":"INFO","name":"api","filename":"app.nim","line":6,"message":"Request req-abc completed","extra":{"status":200,"latency":42}}
+```
+
+#### Piped through `lumber --pretty`:
+
+```
+2026-07-06T13:44:49.081-07:00 PDT [INFO ] (app.nim:5) api: User logged in
+  user: "alice"
+  ip: "10.0.0.1"
+2026-07-06T13:44:49.082-07:00 PDT [INFO ] (app.nim:6) api: Request req-abc completed
+  status: 200
+  latency: 42
 ```
 
 Message-level fields override logger extra on key collision:
@@ -137,12 +206,24 @@ Message-level fields override logger extra on key collision:
 ```nim
 var logger = newLogger(extra = %* {"user": "system"})
 logger.info("login", user="alice")
-# extra.user is "alice", not "system"
+```
+
+#### Output (`user` is `"alice"`, not `"system"`):
+
+```json
+{"timestamp":"2026-07-06T20:44:49.908Z","level":"INFO","name":"app","filename":"app.nim","line":4,"message":"login","extra":{"user":"alice"}}
+```
+
+#### Piped through `lumber --pretty`:
+
+```
+2026-07-06T13:44:49.908-07:00 PDT [INFO ] (app.nim:4) app: login
+  user: "alice"
 ```
 
 ### Exception Logging
 
-Pass any `ref Exception` as an argument — lumber automatically extracts the message, type name, and stack trace into structured fields.
+Pass any `ref Exception` as an argument, and lumber automatically extracts the message, type name, and stack trace into structured fields.
 
 ```nim
 proc loadConfig() =
@@ -157,37 +238,46 @@ except IOError as e:
   logger.error("Failed to load config", e)
 ```
 
-Output:
+#### Output:
 
 ```json
-{"level":"ERROR","message":"Failed to load config","extra":{"error":"file not found: config.toml","errorType":"IOError","stackTrace":"app.nim(8) main\napp.nim(5) initApp\napp.nim(2) loadConfig\n"}}
+{"timestamp":"2026-07-06T20:44:50.747Z","level":"ERROR","name":"api","filename":"app.nim","line":14,"message":"Failed to load config","extra":{"error":"file not found: config.toml","errorType":"IOError","stackTrace":"app.nim(12) app\napp.nim(9) initApp\napp.nim(6) loadConfig\n"}}
 ```
 
-The CLI prettifier renders stack traces on separate lines automatically:
+#### Piped through `lumber` (stack traces are rendered on separate lines automatically):
 
 ```
-[ERROR] (app.nim:10) api: Failed to load config
+2026-07-06T13:44:50.747-07:00 PDT [ERROR] (app.nim:14) api: Failed to load config
   error: "file not found: config.toml"
   errorType: "IOError"
   stackTrace:
-    app.nim(8) main
-    app.nim(5) initApp
-    app.nim(2) loadConfig
+    app.nim(12) app
+    app.nim(9) initApp
+    app.nim(6) loadConfig
 ```
 
-Exceptions work as positional args or keyword args:
-
-```nim
-logger.error("Failed", e)                   # positional
-logger.error("Failed", error=e)             # kwarg (key is ignored)
-logger.error("Failed", e, retries=3)        # mixed with other fields
-```
-
-Multiple exceptions are stored as an array:
+The exception can be passed positionally (as above), as a keyword argument (`error=e`; the key is ignored), or mixed with other fields (`logger.error("Failed", e, retries=3)`). Multiple exceptions are stored as an array:
 
 ```nim
 logger.error("Multiple failures", e1, e2)
-# extra: {"errors": [{"error":"...","errorType":"...","stackTrace":"..."}, ...]}
+```
+
+#### Output:
+
+```json
+{"timestamp":"2026-07-06T20:44:50.747Z","level":"ERROR","name":"api","filename":"app.nim","line":18,"message":"Multiple failures","extra":{"errors":[{"error":"bad input","errorType":"ValueError"},{"error":"disk full","errorType":"IOError"}]}}
+```
+
+#### Piped through `lumber`:
+
+```
+2026-07-06T13:44:50.747-07:00 PDT [ERROR] (app.nim:18) api: Multiple failures
+  exception 1:
+    error: "bad input"
+    errorType: "ValueError"
+  exception 2:
+    error: "disk full"
+    errorType: "IOError"
 ```
 
 ### Timing Blocks
@@ -198,34 +288,24 @@ Measure the duration of a block and log it automatically with `duration_ms` in e
 # Default: logs at INFO level
 logger.time("db query"):
   db.exec("SELECT * FROM users")
-# {"message":"db query","extra":{"duration_ms":12.34}}
 
 # Custom level
 logger.time(LogLevel.DEBUG, "template render"):
   renderPage()
 ```
 
-The CLI prettifier displays duration inline after the message:
+#### Output:
+
+```json
+{"timestamp":"2026-07-06T20:46:29.020Z","level":"INFO","name":"db","filename":"app.nim","line":5,"message":"db query","extra":{"duration_ms":137.24900000000002}}
+{"timestamp":"2026-07-06T20:46:29.041Z","level":"DEBUG","name":"db","filename":"app.nim","line":11,"message":"template render","extra":{"duration_ms":21.38100000000001}}
+```
+
+#### Piped through `lumber` (the duration is displayed inline after the message):
 
 ```
-2026-07-03T15:00:00-07:00 PDT [INFO ] (app.nim:10) db: db query (12ms)
-```
-
-### Any Type as an Argument
-
-Any type with a `$` operator can be passed. Objects are prefixed with their type name.
-
-```nim
-type User = object
-  name: string
-  age: int
-
-var user = User(name: "Dude", age: 40)
-logger.info("Found {0}", user)
-# message: "Found User(name: \"Dude\", age: 40)"
-
-logger.info(user)
-# message: "User(name: \"Dude\", age: 40)"
+2026-07-06T13:46:29.020-07:00 PDT [INFO ] (app.nim:5) db: db query (137ms)
+2026-07-06T13:46:29.041-07:00 PDT [DEBUG] (app.nim:11) db: template render (21ms)
 ```
 
 ### Child Loggers
@@ -237,13 +317,33 @@ var logger = newLogger(name = "api", extra = %* {"service": "my-app"})
 
 var reqLogger = logger.child(extra = %* {"requestId": "abc-123"})
 reqLogger.info("Handling request")
-# extra: {"service": "my-app", "requestId": "abc-123"}
 
 var dbLogger = reqLogger.child(name = "db", extra = %* {"query": "SELECT ..."})
 dbLogger.error("Connection timeout")
-# name: "db", extra: {"service": "my-app", "requestId": "abc-123", "query": "SELECT ..."}
+```
 
-# Child also accepts Nim objects
+#### Output:
+
+```json
+{"timestamp":"2026-07-06T20:44:52.516Z","level":"INFO","name":"api","filename":"app.nim","line":6,"message":"Handling request","extra":{"service":"my-app","requestId":"abc-123"}}
+{"timestamp":"2026-07-06T20:44:52.516Z","level":"ERROR","name":"db","filename":"app.nim","line":9,"message":"Connection timeout","extra":{"service":"my-app","requestId":"abc-123","query":"SELECT ..."}}
+```
+
+#### Piped through `lumber --pretty`:
+
+```
+2026-07-06T13:44:52.516-07:00 PDT [INFO ] (app.nim:6) api: Handling request
+  service: "my-app"
+  requestId: "abc-123"
+2026-07-06T13:44:52.516-07:00 PDT [ERROR] (app.nim:9) db: Connection timeout
+  service: "my-app"
+  requestId: "abc-123"
+  query: "SELECT ..."
+```
+
+Child extra also accepts Nim objects:
+
+```nim
 type DbContext = object
   host: string
   port: int
@@ -253,24 +353,42 @@ var dbLogger = reqLogger.child(name = "db", extra = DbContext(host: "db.local", 
 
 ### Thread-Local Context
 
-Use `withContext` to attach ambient fields that any logger on the current thread will pick up — without passing the logger through function calls.
+Use `withContext` to attach ambient fields that any logger on the current thread will pick up, without passing the logger through function calls.
 
 ```nim
 var logger = newLogger(name = "api")
 
 withContext(%* {"requestId": "abc-123", "userId": 42}):
   logger.info("handling request")
-  # extra: {"requestId": "abc-123", "userId": 42}
-
-  processOrder(order)  # any logger inside also sees requestId/userId
 
   # Nesting adds fields, restores on exit
   withContext(%* {"orderId": "ord-789"}):
     logger.info("processing payment")
-    # extra: {"requestId": "abc-123", "userId": 42, "orderId": "ord-789"}
 
   logger.info("done")
-  # extra: {"requestId": "abc-123", "userId": 42} — orderId is gone
+```
+
+#### Output (note `orderId` appears only inside the nested block):
+
+```json
+{"timestamp":"2026-07-06T20:44:53.346Z","level":"INFO","name":"api","filename":"app.nim","line":6,"message":"handling request","extra":{"requestId":"abc-123","userId":42}}
+{"timestamp":"2026-07-06T20:44:53.346Z","level":"INFO","name":"api","filename":"app.nim","line":9,"message":"processing payment","extra":{"requestId":"abc-123","userId":42,"orderId":"ord-789"}}
+{"timestamp":"2026-07-06T20:44:53.346Z","level":"INFO","name":"api","filename":"app.nim","line":11,"message":"done","extra":{"requestId":"abc-123","userId":42}}
+```
+
+#### Piped through `lumber --pretty`:
+
+```
+2026-07-06T13:44:53.346-07:00 PDT [INFO ] (app.nim:6) api: handling request
+  requestId: "abc-123"
+  userId: 42
+2026-07-06T13:44:53.346-07:00 PDT [INFO ] (app.nim:9) api: processing payment
+  requestId: "abc-123"
+  userId: 42
+  orderId: "ord-789"
+2026-07-06T13:44:53.346-07:00 PDT [INFO ] (app.nim:11) api: done
+  requestId: "abc-123"
+  userId: 42
 ```
 
 Priority order (highest wins): message fields > logger extra > thread-local context.
@@ -291,8 +409,25 @@ use proc(record: var LogRecord): bool =
 use proc(record: var LogRecord): bool =
   record.level != "DEBUG"
 
+var logger = newLogger(name = "api")
+logger.info("request served")
+logger.debug("cache miss")  # suppressed by the second middleware
+
 # Clear all middleware
 clearMiddleware()
+```
+
+#### Output (the INFO line is enriched with `env`; the DEBUG line is suppressed):
+
+```json
+{"timestamp":"2026-07-06T20:44:54.172Z","level":"INFO","name":"api","filename":"app.nim","line":15,"message":"request served","extra":{"env":"production"}}
+```
+
+#### Piped through `lumber --pretty`:
+
+```
+2026-07-06T13:44:54.172-07:00 PDT [INFO ] (app.nim:15) api: request served
+  env: "production"
 ```
 
 The `LogRecord` type:
@@ -315,17 +450,42 @@ Import `lumber/middleware` for ready-made middleware:
 ```nim
 import lumber
 import lumber/middleware
-import regex
+import std/os
 
 # Rate limiter: allow max 5 messages per second from the same source location
 use newRateLimiter(window = 1.0, maxBurst = 5)
+
+var logger = newLogger(name = "api")
+for i in 1 .. 13:
+  if i == 13:
+    sleep(1100)  # let the rate-limit window expire
+  logger.info("Event {0}", i)
 ```
 
-When messages are suppressed, the next emitted message from that source location includes a `suppressed` field with the count of dropped messages:
+Events 6-12 are dropped. When the window expires, the next emitted message from that source location includes a `suppressed` field with the count of dropped messages:
 
 ```json
-{"level":"INFO","message":"Event 11","extra":{"suppressed":7}}
+{"timestamp":"2026-07-06T20:46:30.041Z","level":"INFO","name":"api","filename":"app.nim","line":11,"message":"Event 1"}
+{"timestamp":"2026-07-06T20:46:30.042Z","level":"INFO","name":"api","filename":"app.nim","line":11,"message":"Event 2"}
+{"timestamp":"2026-07-06T20:46:30.042Z","level":"INFO","name":"api","filename":"app.nim","line":11,"message":"Event 3"}
+{"timestamp":"2026-07-06T20:46:30.042Z","level":"INFO","name":"api","filename":"app.nim","line":11,"message":"Event 4"}
+{"timestamp":"2026-07-06T20:46:30.042Z","level":"INFO","name":"api","filename":"app.nim","line":11,"message":"Event 5"}
+{"timestamp":"2026-07-06T20:46:31.143Z","level":"INFO","name":"api","filename":"app.nim","line":11,"message":"Event 13","extra":{"suppressed":7}}
 ```
+
+#### Piped through `lumber --pretty`:
+
+```
+2026-07-06T13:46:30.041-07:00 PDT [INFO ] (app.nim:11) api: Event 1
+2026-07-06T13:46:30.042-07:00 PDT [INFO ] (app.nim:11) api: Event 2
+2026-07-06T13:46:30.042-07:00 PDT [INFO ] (app.nim:11) api: Event 3
+2026-07-06T13:46:30.042-07:00 PDT [INFO ] (app.nim:11) api: Event 4
+2026-07-06T13:46:30.042-07:00 PDT [INFO ] (app.nim:11) api: Event 5
+2026-07-06T13:46:31.143-07:00 PDT [INFO ] (app.nim:11) api: Event 13
+  suppressed: 7
+```
+
+The remaining built-in middleware (the pattern redactor takes a compiled regex, so `import regex` where you use it):
 
 ```nim
 # Sampler: log 1 in every 100 messages
@@ -407,10 +567,10 @@ Output(stream: newDailyFileStream("app.log", maxFiles = 7))
 
 Wrap any stream with `newBufferedStream` for high-throughput logging. Uses a hybrid flush strategy inspired by Go's zap logger:
 
-- **Flush on buffer full** — when accumulated data exceeds `maxSize` (default: 4096 bytes)
-- **Flush on timer** — when `flushIntervalMs` has elapsed since last flush (default: 1000ms)
-- **Flush on level** — immediately on ERROR or FATAL (configurable via `flushLevel`)
-- **Flush on close** — always flushes remaining data
+- **Flush on buffer full** - when accumulated data exceeds `maxSize` (default: 4096 bytes)
+- **Flush on timer** - when `flushIntervalMs` has elapsed since last flush (default: 1000ms)
+- **Flush on level** - immediately on ERROR or FATAL (configurable via `flushLevel`)
+- **Flush on close** - always flushes remaining data
 
 ```nim
 # Default settings (4KB buffer, flush every 1s or on ERROR+)
@@ -454,10 +614,10 @@ The `lumber` binary reads JSON log lines from stdin and prints colored, formatte
 myapp | lumber
 ```
 
-Output format:
+Output format (extra fields render inline by default; use `--pretty` to indent them on separate lines):
 
 ```
-2026-07-03T15:00:00-07:00 PDT [INFO ] (mymodule.nim:10) Server started {"service":"my-app"}
+2026-07-06T13:44:49.081-07:00 PDT [INFO ] (app.nim:5) api: User logged in {"user":"alice","ip":"10.0.0.1"}
 ```
 
 Levels are color-coded: TRACE (blue), DEBUG (light blue), INFO (white), WARN (yellow), ERROR (red), FATAL (magenta).
@@ -477,15 +637,6 @@ Levels are color-coded: TRACE (blue), DEBUG (light blue), INFO (white), WARN (ye
 --init                Create default config file at ~/.config/lumber/config.toml
 --help, -h            Show help
 --version, -v         Show version
-```
-
-### Level Filtering
-
-Filter output by minimum level:
-
-```sh
-myapp | lumber --level warn
-myapp | lumber --level=error
 ```
 
 ### Field Filtering
@@ -517,7 +668,7 @@ myapp | lumber --filter userId=1234 --filter "latency>500"
 
 ### Highlighting
 
-Highlight lines where any field value matches a regex. Unlike `--filter`, non-matching lines are still shown — matching lines get a background tint, and the matched text itself gets a brighter highlight. Matching is case-insensitive.
+Highlight lines where any field value matches a regex. Unlike `--filter`, non-matching lines are still shown: matching lines get a background tint, and the matched text itself gets a brighter highlight. Matching is case-insensitive.
 
 ```sh
 # Highlight a request ID across interleaved logs
@@ -674,6 +825,57 @@ logger.fatal("Shutting down")
 
 for o in outputs:
   o.stream.close()
+```
+
+### Output (also written to `app.log`; ERROR and FATAL additionally go to `error.log`):
+
+```json
+{"timestamp":"2026-07-06T20:44:57.230Z","level":"INFO","name":"demo","filename":"demo.nim","line":26,"message":"Starting up","extra":{"service":"demo-api","env":"production"}}
+{"timestamp":"2026-07-06T20:44:57.231Z","level":"DEBUG","name":"demo","filename":"demo.nim","line":27,"message":"Loading config for User(name: \"Admin\", age: 35)","extra":{"service":"demo-api","env":"production"}}
+{"timestamp":"2026-07-06T20:44:57.231Z","level":"INFO","name":"demo","filename":"demo.nim","line":30,"message":"Server listening on port 8080","extra":{"service":"demo-api","requestId":"req-7f3a","userId":42,"env":"production"}}
+{"timestamp":"2026-07-06T20:44:57.231Z","level":"WARN","name":"demo","filename":"demo.nim","line":31,"message":"Disk usage at 92%","extra":{"service":"demo-api","requestId":"req-7f3a","userId":42,"env":"production"}}
+{"timestamp":"2026-07-06T20:44:57.231Z","level":"INFO","name":"demo","filename":"demo.nim","line":34,"message":"Request handled","extra":{"service":"demo-api","requestId":"req-7f3a","userId":42,"status":200,"latency":42,"path":"/api/users","env":"production"}}
+{"timestamp":"2026-07-06T20:44:57.231Z","level":"ERROR","name":"db","filename":"demo.nim","line":37,"message":"Failed to connect to database","extra":{"service":"demo-api","requestId":"req-7f3a","userId":42,"host":"db.local","port":5432,"env":"production"}}
+{"timestamp":"2026-07-06T20:44:57.232Z","level":"FATAL","name":"demo","filename":"demo.nim","line":39,"message":"Shutting down","extra":{"service":"demo-api","env":"production"}}
+```
+
+#### Piped through `lumber --pretty`:
+
+```
+2026-07-06T13:44:57.230-07:00 PDT [INFO ] (demo.nim:26) demo: Starting up
+  service: "demo-api"
+  env: "production"
+2026-07-06T13:44:57.231-07:00 PDT [DEBUG] (demo.nim:27) demo: Loading config for User(name: "Admin", age: 35)
+  service: "demo-api"
+  env: "production"
+2026-07-06T13:44:57.231-07:00 PDT [INFO ] (demo.nim:30) demo: Server listening on port 8080
+  service: "demo-api"
+  requestId: "req-7f3a"
+  userId: 42
+  env: "production"
+2026-07-06T13:44:57.231-07:00 PDT [WARN ] (demo.nim:31) demo: Disk usage at 92%
+  service: "demo-api"
+  requestId: "req-7f3a"
+  userId: 42
+  env: "production"
+2026-07-06T13:44:57.231-07:00 PDT [INFO ] (demo.nim:34) demo: Request handled
+  service: "demo-api"
+  requestId: "req-7f3a"
+  userId: 42
+  status: 200
+  latency: 42
+  path: "/api/users"
+  env: "production"
+2026-07-06T13:44:57.231-07:00 PDT [ERROR] (demo.nim:37) db: Failed to connect to database
+  service: "demo-api"
+  requestId: "req-7f3a"
+  userId: 42
+  host: "db.local"
+  port: 5432
+  env: "production"
+2026-07-06T13:44:57.232-07:00 PDT [FATAL] (demo.nim:39) demo: Shutting down
+  service: "demo-api"
+  env: "production"
 ```
 
 ## License
