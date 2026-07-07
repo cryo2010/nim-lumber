@@ -103,6 +103,15 @@ test "scratch extra is not shared between records":
   check parseJson(captured[1])["extra"]["marked"].getBool()
   check not parseJson(captured[2]).hasKey("extra")
 
+test "time block measures wall time, not CPU time":
+  setupTest()
+  var logger = newLogger(name = "test")
+  logger.time("sleepy"):
+    sleep(30)
+  check captured.len == 1
+  let ms = parseJson(captured[0])["extra"]["duration_ms"].getFloat()
+  check ms >= 25.0
+
 test "rate limiter allows burst then suppresses":
   setupTest()
   configureLogging(cfg):
