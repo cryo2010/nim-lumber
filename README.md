@@ -11,7 +11,7 @@ A compile-time optimized JSON logger for Nim with a built-in CLI prettifier.
 
 - **Compile-time level filtering** - log calls below the threshold are eliminated from the binary entirely, with zero runtime cost; per-logger runtime levels handle the rest
 - **Structured JSON output** - every log line is valid JSON with timestamp, level, name, filename, line number, and message
-- **Structured messages** - named `key=value` arguments become discrete JSON fields, queryable by log aggregators; `{0}`-style placeholders interpolate positional arguments
+- **Structured messages** - named `key=value` arguments become discrete JSON fields, queryable by log aggregators; extra positional arguments are appended, and Nim's `std/strformat` covers interpolation
 - **Exception logging** - pass any `ref Exception` and lumber extracts the message, type, and stack trace automatically
 - **Contextual logging** - attach fields per logger, inherit them through child loggers, or scope them to a call stack with thread-local `withContext`
 - **Middleware** - enrich, transform, or suppress log records at runtime; rate limiter, sampler, and redaction included
@@ -142,35 +142,39 @@ logger.error("processed")     # goes through normally
 
 Child loggers inherit the parent's level.
 
-### String Interpolation
+### Building Messages
 
-Use `{0}`, `{1}`, etc. to interpolate arguments into the message. Extra arguments are appended. Any type with a `$` operator works; objects are prefixed with their type name. Placeholders are interpreted only in the message template; argument values are inserted verbatim, so data containing `{N}` cannot inject placeholders.
+Build messages with Nim's [`std/strformat`](https://nim-lang.org/docs/strformat.html): named, compile-checked, and evaluated lazily (a call filtered by level never runs the formatting). Extra positional arguments are appended, space-separated; any type with a `$` operator works, and objects are prefixed with their type name. lumber never interprets braces in messages, so there is no placeholder syntax to escape and no way for data to inject one.
 
 ```nim
-logger.info("User {0} logged in from {1}", "alice", "10.0.0.1")
+import std/strformat
+
+let user = "alice"
+let ip = "10.0.0.1"
+logger.info(&"User {user} logged in from {ip}")
 logger.info("Values:", 1, 2, 3)
 
 type User = object
   name: string
   age: int
 
-logger.info("Found {0}", User(name: "Dude", age: 40))
+logger.info("Found", User(name: "Dude", age: 40))
 ```
 
 #### Output:
 
 ```json
-{"timestamp":"2026-07-06T20:44:48.243Z","level":"INFO","name":"api","filename":"app.nim","line":4,"message":"User alice logged in from 10.0.0.1"}
-{"timestamp":"2026-07-06T20:44:48.243Z","level":"INFO","name":"api","filename":"app.nim","line":5,"message":"Values: 1 2 3"}
-{"timestamp":"2026-07-06T20:44:48.243Z","level":"INFO","name":"api","filename":"app.nim","line":11,"message":"Found User(name: \"Dude\", age: 40)"}
+{"timestamp":"2026-07-08T03:27:03.687Z","level":"INFO","name":"api","filename":"app.nim","line":7,"message":"User alice logged in from 10.0.0.1"}
+{"timestamp":"2026-07-08T03:27:03.687Z","level":"INFO","name":"api","filename":"app.nim","line":8,"message":"Values: 1 2 3"}
+{"timestamp":"2026-07-08T03:27:03.687Z","level":"INFO","name":"api","filename":"app.nim","line":14,"message":"Found User(name: \"Dude\", age: 40)"}
 ```
 
 #### Piped through `lumber`:
 
 ```
-2026-07-06T13:44:48.243-07:00 PDT [INFO ] (app.nim:4) api: User alice logged in from 10.0.0.1
-2026-07-06T13:44:48.243-07:00 PDT [INFO ] (app.nim:5) api: Values: 1 2 3
-2026-07-06T13:44:48.243-07:00 PDT [INFO ] (app.nim:11) api: Found User(name: "Dude", age: 40)
+2026-07-07T20:27:03.687-07:00 PDT [INFO ] (app.nim:7) api: User alice logged in from 10.0.0.1
+2026-07-07T20:27:03.687-07:00 PDT [INFO ] (app.nim:8) api: Values: 1 2 3
+2026-07-07T20:27:03.687-07:00 PDT [INFO ] (app.nim:14) api: Found User(name: "Dude", age: 40)
 ```
 
 ### Structured Messages
@@ -178,27 +182,29 @@ logger.info("Found {0}", User(name: "Dude", age: 40))
 Named arguments become discrete fields in the `extra` JSON object, keeping them queryable by log aggregators rather than buried in a text string.
 
 ```nim
+import std/strformat
+
 let reqId = "req-abc"
 logger.info("User logged in", user="alice", ip="10.0.0.1")
 
-# Mix positional interpolation with named fields
-logger.info("Request {0} completed", reqId, status=200, latency=42)
+# Mix strformat interpolation with named fields
+logger.info(&"Request {reqId} completed", status=200, latency=42)
 ```
 
 #### Output:
 
 ```json
-{"timestamp":"2026-07-06T20:44:49.081Z","level":"INFO","name":"api","filename":"app.nim","line":5,"message":"User logged in","extra":{"user":"alice","ip":"10.0.0.1"}}
-{"timestamp":"2026-07-06T20:44:49.082Z","level":"INFO","name":"api","filename":"app.nim","line":6,"message":"Request req-abc completed","extra":{"status":200,"latency":42}}
+{"timestamp":"2026-07-08T03:27:04.532Z","level":"INFO","name":"api","filename":"app.nim","line":6,"message":"User logged in","extra":{"user":"alice","ip":"10.0.0.1"}}
+{"timestamp":"2026-07-08T03:27:04.532Z","level":"INFO","name":"api","filename":"app.nim","line":7,"message":"Request req-abc completed","extra":{"status":200,"latency":42}}
 ```
 
 #### Piped through `lumber --pretty`:
 
 ```
-2026-07-06T13:44:49.081-07:00 PDT [INFO ] (app.nim:5) api: User logged in
+2026-07-07T20:27:04.532-07:00 PDT [INFO ] (app.nim:6) api: User logged in
   user: "alice"
   ip: "10.0.0.1"
-2026-07-06T13:44:49.082-07:00 PDT [INFO ] (app.nim:6) api: Request req-abc completed
+2026-07-07T20:27:04.532-07:00 PDT [INFO ] (app.nim:7) api: Request req-abc completed
   status: 200
   latency: 42
 ```
@@ -452,7 +458,7 @@ Import `lumber/middleware` for ready-made middleware:
 ```nim
 import lumber
 import lumber/middleware
-import std/os
+import std/[os, strformat]
 
 configureLogging(cfg):
   # Rate limiter: allow max 5 messages per second from the same source location
@@ -462,29 +468,29 @@ var logger = newLogger(name = "api")
 for i in 1 .. 13:
   if i == 13:
     sleep(1100)  # let the rate-limit window expire
-  logger.info("Event {0}", i)
+  logger.info(&"Event {i}")
 ```
 
 Events 6-12 are dropped. When the window expires, the next emitted message from that source location includes a `suppressed` field with the count of dropped messages:
 
 ```json
-{"timestamp":"2026-07-07T03:18:46.040Z","level":"INFO","name":"api","filename":"app.nim","line":13,"message":"Event 1"}
-{"timestamp":"2026-07-07T03:18:46.040Z","level":"INFO","name":"api","filename":"app.nim","line":13,"message":"Event 2"}
-{"timestamp":"2026-07-07T03:18:46.040Z","level":"INFO","name":"api","filename":"app.nim","line":13,"message":"Event 3"}
-{"timestamp":"2026-07-07T03:18:46.040Z","level":"INFO","name":"api","filename":"app.nim","line":13,"message":"Event 4"}
-{"timestamp":"2026-07-07T03:18:46.040Z","level":"INFO","name":"api","filename":"app.nim","line":13,"message":"Event 5"}
-{"timestamp":"2026-07-07T03:18:47.146Z","level":"INFO","name":"api","filename":"app.nim","line":13,"message":"Event 13","extra":{"suppressed":7}}
+{"timestamp":"2026-07-08T03:27:05.585Z","level":"INFO","name":"api","filename":"app.nim","line":13,"message":"Event 1"}
+{"timestamp":"2026-07-08T03:27:05.586Z","level":"INFO","name":"api","filename":"app.nim","line":13,"message":"Event 2"}
+{"timestamp":"2026-07-08T03:27:05.586Z","level":"INFO","name":"api","filename":"app.nim","line":13,"message":"Event 3"}
+{"timestamp":"2026-07-08T03:27:05.586Z","level":"INFO","name":"api","filename":"app.nim","line":13,"message":"Event 4"}
+{"timestamp":"2026-07-08T03:27:05.586Z","level":"INFO","name":"api","filename":"app.nim","line":13,"message":"Event 5"}
+{"timestamp":"2026-07-08T03:27:06.691Z","level":"INFO","name":"api","filename":"app.nim","line":13,"message":"Event 13","extra":{"suppressed":7}}
 ```
 
 #### Piped through `lumber --pretty`:
 
 ```
-2026-07-06T20:18:46.040-07:00 PDT [INFO ] (app.nim:13) api: Event 1
-2026-07-06T20:18:46.040-07:00 PDT [INFO ] (app.nim:13) api: Event 2
-2026-07-06T20:18:46.040-07:00 PDT [INFO ] (app.nim:13) api: Event 3
-2026-07-06T20:18:46.040-07:00 PDT [INFO ] (app.nim:13) api: Event 4
-2026-07-06T20:18:46.040-07:00 PDT [INFO ] (app.nim:13) api: Event 5
-2026-07-06T20:18:47.146-07:00 PDT [INFO ] (app.nim:13) api: Event 13
+2026-07-07T20:27:05.585-07:00 PDT [INFO ] (app.nim:13) api: Event 1
+2026-07-07T20:27:05.586-07:00 PDT [INFO ] (app.nim:13) api: Event 2
+2026-07-07T20:27:05.586-07:00 PDT [INFO ] (app.nim:13) api: Event 3
+2026-07-07T20:27:05.586-07:00 PDT [INFO ] (app.nim:13) api: Event 4
+2026-07-07T20:27:05.586-07:00 PDT [INFO ] (app.nim:13) api: Event 5
+2026-07-07T20:27:06.691-07:00 PDT [INFO ] (app.nim:13) api: Event 13
   suppressed: 7
 ```
 
@@ -818,11 +824,11 @@ var logger = newLogger(extra = %* {"service": "demo-api"})
 var admin = User(name: "Admin", age: 35)
 
 logger.info("Starting up")
-logger.debug("Loading config for {0}", admin)
+logger.debug("Loading config for", admin)
 
 var reqLogger = logger.child(extra = %* {"requestId": "req-7f3a", "userId": 42})
-reqLogger.info("Server listening on port {0}", 8080)
-reqLogger.warn("Disk usage at {0}%", 92)
+reqLogger.info("Server listening on port 8080")
+reqLogger.warn("Disk usage at 92%")
 
 # Structured message fields
 reqLogger.info("Request handled", status=200, latency=42, path="/api/users")
@@ -839,35 +845,35 @@ for o in outputs:
 ### Output (also written to `app.log`; ERROR and FATAL additionally go to `error.log`):
 
 ```json
-{"timestamp":"2026-07-07T05:05:05.688Z","level":"INFO","name":"demo","filename":"demo.nim","line":24,"message":"Starting up","extra":{"service":"demo-api","env":"production"}}
-{"timestamp":"2026-07-07T05:05:05.688Z","level":"DEBUG","name":"demo","filename":"demo.nim","line":25,"message":"Loading config for User(name: \"Admin\", age: 35)","extra":{"service":"demo-api","env":"production"}}
-{"timestamp":"2026-07-07T05:05:05.688Z","level":"INFO","name":"demo","filename":"demo.nim","line":28,"message":"Server listening on port 8080","extra":{"service":"demo-api","requestId":"req-7f3a","userId":42,"env":"production"}}
-{"timestamp":"2026-07-07T05:05:05.688Z","level":"WARN","name":"demo","filename":"demo.nim","line":29,"message":"Disk usage at 92%","extra":{"service":"demo-api","requestId":"req-7f3a","userId":42,"env":"production"}}
-{"timestamp":"2026-07-07T05:05:05.688Z","level":"INFO","name":"demo","filename":"demo.nim","line":32,"message":"Request handled","extra":{"service":"demo-api","requestId":"req-7f3a","userId":42,"status":200,"latency":42,"path":"/api/users","env":"production"}}
-{"timestamp":"2026-07-07T05:05:05.688Z","level":"ERROR","name":"db","filename":"demo.nim","line":35,"message":"Failed to connect to database","extra":{"service":"demo-api","requestId":"req-7f3a","userId":42,"host":"db.local","port":5432,"env":"production"}}
-{"timestamp":"2026-07-07T05:05:05.688Z","level":"FATAL","name":"demo","filename":"demo.nim","line":37,"message":"Shutting down","extra":{"service":"demo-api","env":"production"}}
+{"timestamp":"2026-07-08T03:27:07.540Z","level":"INFO","name":"demo","filename":"demo.nim","line":24,"message":"Starting up","extra":{"service":"demo-api","env":"production"}}
+{"timestamp":"2026-07-08T03:27:07.540Z","level":"DEBUG","name":"demo","filename":"demo.nim","line":25,"message":"Loading config for User(name: \"Admin\", age: 35)","extra":{"service":"demo-api","env":"production"}}
+{"timestamp":"2026-07-08T03:27:07.540Z","level":"INFO","name":"demo","filename":"demo.nim","line":28,"message":"Server listening on port 8080","extra":{"service":"demo-api","requestId":"req-7f3a","userId":42,"env":"production"}}
+{"timestamp":"2026-07-08T03:27:07.540Z","level":"WARN","name":"demo","filename":"demo.nim","line":29,"message":"Disk usage at 92%","extra":{"service":"demo-api","requestId":"req-7f3a","userId":42,"env":"production"}}
+{"timestamp":"2026-07-08T03:27:07.540Z","level":"INFO","name":"demo","filename":"demo.nim","line":32,"message":"Request handled","extra":{"service":"demo-api","requestId":"req-7f3a","userId":42,"status":200,"latency":42,"path":"/api/users","env":"production"}}
+{"timestamp":"2026-07-08T03:27:07.541Z","level":"ERROR","name":"db","filename":"demo.nim","line":35,"message":"Failed to connect to database","extra":{"service":"demo-api","requestId":"req-7f3a","userId":42,"host":"db.local","port":5432,"env":"production"}}
+{"timestamp":"2026-07-08T03:27:07.541Z","level":"FATAL","name":"demo","filename":"demo.nim","line":37,"message":"Shutting down","extra":{"service":"demo-api","env":"production"}}
 ```
 
 #### Piped through `lumber --pretty`:
 
 ```
-2026-07-06T22:05:05.688-07:00 PDT [INFO ] (demo.nim:24) demo: Starting up
+2026-07-07T20:27:07.540-07:00 PDT [INFO ] (demo.nim:24) demo: Starting up
   service: "demo-api"
   env: "production"
-2026-07-06T22:05:05.688-07:00 PDT [DEBUG] (demo.nim:25) demo: Loading config for User(name: "Admin", age: 35)
+2026-07-07T20:27:07.540-07:00 PDT [DEBUG] (demo.nim:25) demo: Loading config for User(name: "Admin", age: 35)
   service: "demo-api"
   env: "production"
-2026-07-06T22:05:05.688-07:00 PDT [INFO ] (demo.nim:28) demo: Server listening on port 8080
-  service: "demo-api"
-  requestId: "req-7f3a"
-  userId: 42
-  env: "production"
-2026-07-06T22:05:05.688-07:00 PDT [WARN ] (demo.nim:29) demo: Disk usage at 92%
+2026-07-07T20:27:07.540-07:00 PDT [INFO ] (demo.nim:28) demo: Server listening on port 8080
   service: "demo-api"
   requestId: "req-7f3a"
   userId: 42
   env: "production"
-2026-07-06T22:05:05.688-07:00 PDT [INFO ] (demo.nim:32) demo: Request handled
+2026-07-07T20:27:07.540-07:00 PDT [WARN ] (demo.nim:29) demo: Disk usage at 92%
+  service: "demo-api"
+  requestId: "req-7f3a"
+  userId: 42
+  env: "production"
+2026-07-07T20:27:07.540-07:00 PDT [INFO ] (demo.nim:32) demo: Request handled
   service: "demo-api"
   requestId: "req-7f3a"
   userId: 42
@@ -875,14 +881,14 @@ for o in outputs:
   latency: 42
   path: "/api/users"
   env: "production"
-2026-07-06T22:05:05.688-07:00 PDT [ERROR] (demo.nim:35) db: Failed to connect to database
+2026-07-07T20:27:07.541-07:00 PDT [ERROR] (demo.nim:35) db: Failed to connect to database
   service: "demo-api"
   requestId: "req-7f3a"
   userId: 42
   host: "db.local"
   port: 5432
   env: "production"
-2026-07-06T22:05:05.688-07:00 PDT [FATAL] (demo.nim:37) demo: Shutting down
+2026-07-07T20:27:07.541-07:00 PDT [FATAL] (demo.nim:37) demo: Shutting down
   service: "demo-api"
   env: "production"
 ```

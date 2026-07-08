@@ -7,7 +7,7 @@
 ## Run:
 ##   nim r demos/threads.nim
 
-import std/[os, streams, json]
+import std/[os, streams, json, strformat]
 import ../src/lumber
 
 const
@@ -24,7 +24,7 @@ proc worker(id: int) {.thread.} =
     var logger = newLogger(name = "worker")
     withContext(%* {"ctxThread": id}):
       for i in 0 ..< messagesPerThread:
-        logger.info("message {0} from thread {1}", i, id, seqNo=i, thread=id)
+        logger.info(&"message {i} from thread {id}", seqNo=i, thread=id)
 
 var threads: array[numThreads, Thread[int]]
 for i in 0 ..< numThreads:
