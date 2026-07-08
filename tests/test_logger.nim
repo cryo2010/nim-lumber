@@ -165,25 +165,25 @@ test "compile-time no-op for lower levels":
   logger.trace("should appear at TRACE level")
   logger.debug("should appear at DEBUG level")
 
-test "withContext adds thread-local fields":
+test "withLogContext adds thread-local fields":
   var logger = newLogger(name = "test")
-  withContext(%* {"requestId": "abc-123", "userId": 42}):
+  withLogContext(%* {"requestId": "abc-123", "userId": 42}):
     logger.info("in context")
 
-test "withContext nests and restores":
+test "withLogContext nests and restores":
   var logger = newLogger(name = "test")
-  withContext(%* {"requestId": "abc-123"}):
+  withLogContext(%* {"requestId": "abc-123"}):
     logger.info("outer")
-    withContext(%* {"orderId": "ord-1"}):
+    withLogContext(%* {"orderId": "ord-1"}):
       logger.info("inner")
     logger.info("back to outer")
 
-test "withContext merges with logger extra":
+test "withLogContext merges with logger extra":
   var logger = newLogger(name = "test", extra = %* {"service": "api"})
-  withContext(%* {"requestId": "req-1"}):
+  withLogContext(%* {"requestId": "req-1"}):
     logger.info("merged")
 
-test "withContext fields overridden by message fields":
+test "withLogContext fields overridden by message fields":
   var logger = newLogger(name = "test")
-  withContext(%* {"user": "system"}):
+  withLogContext(%* {"user": "system"}):
     logger.info("login", user="alice")
