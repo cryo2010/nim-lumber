@@ -239,7 +239,7 @@ logger.info("login", user="alice")
 
 ### Exception Logging
 
-Pass any `ref Exception` as an argument, and lumber automatically extracts the message, type name, and stack trace into structured fields.
+Pass any `ref Exception` as an argument, and lumber automatically extracts the message, type name, and stack trace into structured fields. The `stackTrace` field appears only for exceptions that were actually raised (traces are captured at raise time) and in builds with stack traces enabled (debug builds, or `--stacktrace:on` with `-d:release`).
 
 ```nim
 proc loadConfig() =
@@ -257,13 +257,13 @@ except IOError as e:
 #### Output:
 
 ```json
-{"timestamp":"2026-07-06T20:44:50.747Z","level":"ERROR","name":"api","filename":"app.nim","line":14,"message":"Failed to load config","extra":{"error":"file not found: config.toml","errorType":"IOError","stackTrace":"app.nim(12) app\napp.nim(9) initApp\napp.nim(6) loadConfig\n"}}
+{"timestamp":"2026-07-08T04:50:14.324Z","level":"ERROR","name":"api","filename":"app.nim","line":14,"message":"Failed to load config","extra":{"error":"file not found: config.toml","errorType":"IOError","stackTrace":"app.nim(12) app\napp.nim(9) initApp\napp.nim(6) loadConfig\n"}}
 ```
 
 #### Piped through `lumber` (stack traces are rendered on separate lines automatically):
 
 ```
-2026-07-06T13:44:50.747-07:00 PDT [ERROR] (app.nim:14) api: Failed to load config
+2026-07-07T21:50:14.324-07:00 PDT [ERROR] (app.nim:14) api: Failed to load config
   error: "file not found: config.toml"
   errorType: "IOError"
   stackTrace:
@@ -275,25 +275,40 @@ except IOError as e:
 The exception can be passed positionally (as above), as a keyword argument (`error=e`; the key is ignored), or mixed with other fields (`logger.error("Failed", e, retries=3)`). Multiple exceptions are stored as an array:
 
 ```nim
+var e1, e2: ref Exception
+try:
+  validate()
+except ValueError as e:
+  e1 = e
+try:
+  writeState()
+except IOError as e:
+  e2 = e
 logger.error("Multiple failures", e1, e2)
 ```
 
 #### Output:
 
 ```json
-{"timestamp":"2026-07-06T20:44:50.747Z","level":"ERROR","name":"api","filename":"app.nim","line":18,"message":"Multiple failures","extra":{"errors":[{"error":"bad input","errorType":"ValueError"},{"error":"disk full","errorType":"IOError"}]}}
+{"timestamp":"2026-07-08T04:50:14.324Z","level":"ERROR","name":"api","filename":"app.nim","line":31,"message":"Multiple failures","extra":{"errors":[{"error":"bad input","errorType":"ValueError","stackTrace":"app.nim(24) app\napp.nim(17) validate\n"},{"error":"disk full","errorType":"IOError","stackTrace":"app.nim(28) app\napp.nim(20) writeState\n"}]}}
 ```
 
 #### Piped through `lumber`:
 
 ```
-2026-07-06T13:44:50.747-07:00 PDT [ERROR] (app.nim:18) api: Multiple failures
+2026-07-07T21:50:14.324-07:00 PDT [ERROR] (app.nim:31) api: Multiple failures
   exception 1:
     error: "bad input"
     errorType: "ValueError"
+    stackTrace:
+      app.nim(24) app
+      app.nim(17) validate
   exception 2:
     error: "disk full"
     errorType: "IOError"
+    stackTrace:
+      app.nim(28) app
+      app.nim(20) writeState
 ```
 
 ### Timing Blocks
