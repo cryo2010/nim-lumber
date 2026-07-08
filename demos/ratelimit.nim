@@ -5,7 +5,7 @@
 ## Run:
 ##   nim r demos/ratelimit.nim | ./lumber --pretty
 
-import std/os
+import std/[os, strformat]
 import ../src/lumber
 import ../src/lumber/middleware
 
@@ -23,4 +23,4 @@ for i in 1 .. 13:
   if i == 11 and not slept:
     sleep(1100)
     slept = true
-  logger.info("Event {0}", i)
+  logger.info(&"Event {i}")

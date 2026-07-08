@@ -103,22 +103,13 @@ test "scratch extra is not shared between records":
   check parseJson(captured[1])["extra"]["marked"].getBool()
   check not parseJson(captured[2]).hasKey("extra")
 
-test "placeholders in argument values are not interpolated":
+test "positional arguments are appended and braces are never interpreted":
   setupTest()
   var logger = newLogger(name = "test")
-  logger.info("{0}", "{1}", "secret")
-  check captured.len == 1
-  check parseJson(captured[0])["message"].getStr() == "{1} secret"
-
-test "message interpolation edge cases stay literal":
-  setupTest()
-  var logger = newLogger(name = "test")
-  logger.info("{0} and {0}", "x")
-  logger.info("{5} out of range", "a")
-  logger.info("braces { } {} {a} stay literal", "b")
-  check parseJson(captured[0])["message"].getStr() == "x and x"
-  check parseJson(captured[1])["message"].getStr() == "{5} out of range a"
-  check parseJson(captured[2])["message"].getStr() == "braces { } {} {a} stay literal b"
+  logger.info("Values:", 1, 2, 3)
+  logger.info("literal {0} braces {}", "x")
+  check parseJson(captured[0])["message"].getStr() == "Values: 1 2 3"
+  check parseJson(captured[1])["message"].getStr() == "literal {0} braces {} x"
 
 test "time block measures wall time, not CPU time":
   setupTest()

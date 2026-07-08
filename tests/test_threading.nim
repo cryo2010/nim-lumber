@@ -1,5 +1,5 @@
 import unittest
-import std/[os, streams, json]
+import std/[os, streams, json, strformat]
 import lumber
 
 # Hammers the logging hot path from many threads at once, then verifies the
@@ -18,7 +18,7 @@ proc worker(id: int) {.thread.} =
     var logger = newLogger(name = "worker")
     withContext(%* {"ctxThread": id}):
       for i in 0 ..< messagesPerThread:
-        logger.info("message {0} from thread {1}", i, id, seqNo=i, thread=id)
+        logger.info(&"message {i} from thread {id}", seqNo=i, thread=id)
 
 test "concurrent logging: intact lines, per-thread order, context isolation":
   removeFile(logFile)

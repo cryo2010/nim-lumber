@@ -1,5 +1,5 @@
 import unittest
-import std/[os, streams, strutils]
+import std/[os, streams, strutils, strformat]
 import lumber
 
 # -- Size-based rotation --
@@ -134,7 +134,7 @@ test "async stream flushes when its queue drains, without close":
       cfg.outputs = @[Output(stream: newFileStream(stdout))]
   var logger = newLogger(name = "test")
   for i in 0 ..< 100:
-    logger.info("message {0}", i)
+    logger.info(&"message {i}")
   # Give the writer thread time to drain and flush; no close() here, so
   # the data on disk proves the drain-flush happened
   sleep(200)

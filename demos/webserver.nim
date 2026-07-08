@@ -7,7 +7,7 @@
 ##   nim r demos/webserver.nim | ./lumber --pretty
 ##   curl http://localhost:8080/api/user
 
-import std/[asynchttpserver, asyncdispatch, json, random, strutils]
+import std/[asynchttpserver, asyncdispatch, json, random, strutils, strformat]
 import ../src/lumber
 
 randomize()
@@ -22,7 +22,7 @@ proc handler(req: Request) {.async, gcsafe.} =
     let reqId = "req-" & toHex(rand(0xFFFF), 4).toLowerAscii()
 
     withContext(%* {"requestId": reqId, "method": $req.reqMethod, "path": req.url.path}):
-      logger.info("{0} logged in", user, userId=user, ip="127.0.0.1")
+      logger.info(&"{user} logged in", userId=user, ip="127.0.0.1")
 
       # Simulate occasional slow requests
       if rand(10) == 0:
@@ -33,7 +33,7 @@ proc handler(req: Request) {.async, gcsafe.} =
 
 proc main() {.async.} =
   var server = newAsyncHttpServer()
-  logger.info("Listening on port {0}", 8080)
+  logger.info("Listening on port 8080")
   server.listen(Port(8080))
   while true:
     if server.shouldAcceptRequest():

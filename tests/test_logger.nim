@@ -31,7 +31,7 @@ test "basic data message":
 test "message with interpolated argument":
   var logger = newLogger(name = "test")
   var user = User(name: "Dude", age: 40)
-  logger.info("Here is a user {0}", user)
+  logger.info("Here is a user", user)
 
 test "object argument":
   var logger = newLogger(name = "test")
@@ -152,11 +152,11 @@ test "runtime-filtered calls do not evaluate arguments":
     "value"
   var logger = newLogger(name = "test")
   logger.level = LogLevel.ERROR
-  logger.info("msg {0}", sideEffect())
+  logger.info("msg", sideEffect())
   logger.info("event", field=sideEffect())
   check not evaluated
   logger.level = LogLevel.TRACE
-  logger.error("msg {0}", sideEffect())
+  logger.error("msg", sideEffect())
   check evaluated
 
 test "compile-time no-op for lower levels":

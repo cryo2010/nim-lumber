@@ -5,6 +5,7 @@
 ##   nim r demos/minimal.nim
 ##   nim r demos/minimal.nim | ./lumber --pretty
 
+import std/strformat
 import ../src/lumber
 
 type
@@ -16,7 +17,7 @@ var user = User(name: "Alice")
 
 logger.trace("This is a trace")
 logger.debug(user)
-logger.info("{0} logged in", user.name)
+logger.info(&"{user.name} logged in")
 logger.warn("Disk usage high", partition="/dev/sda1", usage=92)
 
 proc loadConfig() =
