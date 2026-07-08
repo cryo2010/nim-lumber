@@ -3,15 +3,15 @@
 [![CI](https://github.com/cryo2010/nim-lumber/actions/workflows/ci.yml/badge.svg)](https://github.com/cryo2010/nim-lumber/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-A compile-time optimized JSON logger for Nim with a built-in CLI prettifier.
+A JSON logger for Nim with a built-in CLI prettifier.
 
 <img src="docs/screenshot.png" alt="lumber CLI output" width="100%">
 
 ## Features
 
-- **Compile-time level filtering** - log calls below the threshold are eliminated from the binary entirely, with zero runtime cost; per-logger runtime levels handle the rest
 - **Structured JSON output** - every log line is valid JSON with timestamp, level, name, filename, line number, and message
 - **Structured messages** - named `key=value` arguments become discrete JSON fields, queryable by log aggregators; extra positional arguments are appended, and Nim's `std/strformat` covers interpolation
+- **Compile-time level filtering** - log calls below the threshold are eliminated from the binary entirely, with zero runtime cost; per-logger runtime levels handle the rest
 - **Exception logging** - pass any `ref Exception` and lumber extracts the message, type, and stack trace automatically
 - **Contextual logging** - attach fields per logger, inherit them through child loggers, or scope them to a call stack with thread-local `withLogContext`
 - **Middleware** - enrich, transform, or suppress log records at runtime; rate limiter, sampler, and redaction included
