@@ -33,22 +33,30 @@ This installs both the library and the `lumber` CLI prettifier (into nimble's bi
 ```nim
 import lumber
 
-var logger = newLogger()
-logger.info("Hello, world!")
+# One module-level logger serves the whole module; its name defaults
+# to the module's filename
+let logger = newLogger()
+
+proc greet() =
+  logger.info("Hello, world!")
+
+greet()
 ```
+
+A single module-level logger is the idiomatic setup: every proc in the module shares it, and request- or task-scoped context comes from [child loggers](#child-loggers) or [`withLogContext`](#thread-local-context) rather than new loggers.
 
 > **Tip:** If you prefer namespaced access (`lumber.outputs`, `lumber.newLogger`, etc.), use `from lumber import nil`. All examples below use plain `import lumber` for brevity.
 
 #### Output:
 
 ```json
-{"timestamp":"2026-07-06T20:44:45.742Z","level":"INFO","name":"mymodule","filename":"mymodule.nim","line":4,"message":"Hello, world!"}
+{"timestamp":"2026-07-08T03:55:22.324Z","level":"INFO","name":"mymodule","filename":"mymodule.nim","line":8,"message":"Hello, world!"}
 ```
 
 #### Piped through the `lumber` CLI prettifier:
 
 ```
-2026-07-06T13:44:45.742-07:00 PDT [INFO ] (mymodule.nim:4) mymodule: Hello, world!
+2026-07-07T20:55:22.324-07:00 PDT [INFO ] (mymodule.nim:8) mymodule: Hello, world!
 ```
 
 ## Compile-Time Level Filtering
@@ -892,6 +900,16 @@ for o in outputs:
   service: "demo-api"
   env: "production"
 ```
+
+## Thanks
+
+lumber borrows its best ideas from projects that proved them first:
+
+- **[pino](https://github.com/pinojs/pino)** - JSON lines, the CLI prettifier
+- **[python logging](https://docs.python.org/3/library/logging.html)** - `extra` fields and the rotating file handlers
+- **[zap](https://github.com/uber-go/zap)** - the hybrid flush strategy behind `BufferedStream`
+- **[chronicles](https://github.com/status-im/nim-chronicles)** - the scoped log context behind `withLogContext`
+- **[Express](https://expressjs.com)** - the middleware chain
 
 ## License
 
