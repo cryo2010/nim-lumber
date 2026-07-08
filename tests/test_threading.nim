@@ -16,7 +16,7 @@ let logFile = getTempDir() / "lumber_test_threading.log"
 proc worker(id: int) {.thread.} =
   {.cast(gcsafe).}:
     var logger = newLogger(name = "worker")
-    withContext(%* {"ctxThread": id}):
+    withLogContext(%* {"ctxThread": id}):
       for i in 0 ..< messagesPerThread:
         logger.info(&"message {i} from thread {id}", seqNo=i, thread=id)
 
@@ -29,7 +29,7 @@ test "concurrent logging: intact lines, per-thread order, context isolation":
   for i in 0 ..< numThreads:
     createThread(threads[i], worker, i)
   joinThreads(threads)
-  flush()
+  flushLogs()
 
   var lineCount = 0
   var nextSeq: array[numThreads, int]

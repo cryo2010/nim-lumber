@@ -13,7 +13,7 @@ A compile-time optimized JSON logger for Nim with a built-in CLI prettifier.
 - **Structured JSON output** - every log line is valid JSON with timestamp, level, name, filename, line number, and message
 - **Structured messages** - named `key=value` arguments become discrete JSON fields, queryable by log aggregators; extra positional arguments are appended, and Nim's `std/strformat` covers interpolation
 - **Exception logging** - pass any `ref Exception` and lumber extracts the message, type, and stack trace automatically
-- **Contextual logging** - attach fields per logger, inherit them through child loggers, or scope them to a call stack with thread-local `withContext`
+- **Contextual logging** - attach fields per logger, inherit them through child loggers, or scope them to a call stack with thread-local `withLogContext`
 - **Middleware** - enrich, transform, or suppress log records at runtime; rate limiter, sampler, and redaction included
 - **Flexible outputs** - write to stdout, files, or any custom `Stream` simultaneously, with built-in size/time rotation, buffering, a background-thread async writer, and automatic flush on exit
 - **Thread-safe** - safe for concurrent use from multiple threads
@@ -361,16 +361,16 @@ var dbLogger = reqLogger.child(name = "db", extra = DbContext(host: "db.local", 
 
 ### Thread-Local Context
 
-Use `withContext` to attach ambient fields that any logger on the current thread will pick up, without passing the logger through function calls.
+Use `withLogContext` to attach ambient fields that any logger on the current thread will pick up, without passing the logger through function calls.
 
 ```nim
 var logger = newLogger(name = "api")
 
-withContext(%* {"requestId": "abc-123", "userId": 42}):
+withLogContext(%* {"requestId": "abc-123", "userId": 42}):
   logger.info("handling request")
 
   # Nesting adds fields, restores on exit
-  withContext(%* {"orderId": "ord-789"}):
+  withLogContext(%* {"orderId": "ord-789"}):
     logger.info("processing payment")
 
   logger.info("done")

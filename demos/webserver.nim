@@ -1,5 +1,5 @@
 ## Request-scoped logging in an async HTTP server: each request gets a
-## withContext block carrying requestId/method/path, so every log line
+## withLogContext block carrying requestId/method/path, so every log line
 ## inside the handler is tagged automatically. Async handlers all run on
 ## one thread, so this composes with thread-local context.
 ##
@@ -21,7 +21,7 @@ proc handler(req: Request) {.async, gcsafe.} =
     let user = users[rand(users.high)]
     let reqId = "req-" & toHex(rand(0xFFFF), 4).toLowerAscii()
 
-    withContext(%* {"requestId": reqId, "method": $req.reqMethod, "path": req.url.path}):
+    withLogContext(%* {"requestId": reqId, "method": $req.reqMethod, "path": req.url.path}):
       logger.info(&"{user} logged in", userId=user, ip="127.0.0.1")
 
       # Simulate occasional slow requests

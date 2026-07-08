@@ -123,7 +123,7 @@ template configureLogging*(cfg, body: untyped) =
   ## ```
   configureLoggingImpl(proc(cfg: var LogConfig) = body)
 
-proc flush*() =
+proc flushLogs*() =
   ## Flush all output streams. Call this before exiting to ensure
   ## buffered log data is written.
   for o in outputs:
@@ -132,8 +132,10 @@ proc flush*() =
     except CatchableError:
       discard
 
-proc shutdown*() =
-  ## Flush and close all output streams. Call on graceful exit.
+proc shutdownLogs*() =
+  ## Flush and close all output streams; async writer threads are joined
+  ## and file handles released. Call on graceful exit. Logging after this
+  ## point is discarded by the closed streams.
   for o in outputs:
     try:
       o.stream.flush()
@@ -144,24 +146,28 @@ proc shutdown*() =
 when defined(posix):
   import std/posix
 
-addExitProc(proc() = flush())
+addExitProc(proc() = flushLogs())
 
-proc flushOnExit*() =
-  ## Register SIGTERM/SIGINT signal handlers that flush all outputs
-  ## before process exit. Call once at startup if your application
-  ## may be terminated by signals.
-  ## Note: atexit flush is already registered automatically on import.
+proc shutdownLogsOnSignal*() =
+  ## Register SIGTERM/SIGINT handlers that run `shutdownLogs` and quit
+  ## (exit codes 143 and 130). Call once at startup in applications that
+  ## have no signal handling of their own; it matters when buffered or
+  ## async outputs hold data in memory, since default signal death skips
+  ## the automatic atexit flush. Applications with their own graceful
+  ## shutdown should not use this (it overwrites the Ctrl-C hook and
+  ## quits immediately); call `shutdownLogs` from their shutdown path
+  ## instead.
   setControlCHook(proc() {.noconv.} =
-    shutdown()
+    shutdownLogs()
     quit(130)
   )
   when defined(posix):
     proc handleTerm(sig: cint) {.noconv.} =
-      shutdown()
+      shutdownLogs()
       quit(143)
     discard posix.signal(SIGTERM, handleTerm)
 
-template withContext*(fields: JsonNode, body: untyped) =
+template withLogContext*(fields: JsonNode, body: untyped) =
   let prev = context
   if prev.isNil:
     context = fields

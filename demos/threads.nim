@@ -1,6 +1,6 @@
 ## Hammers the logging hot path from many threads at once, then verifies the
 ## output: every line must be intact JSON (no torn writes), per-thread
-## sequence numbers must arrive in order, and withContext fields must never
+## sequence numbers must arrive in order, and withLogContext fields must never
 ## leak between threads. Writes and then verifies threads.log in the
 ## current directory.
 ##
@@ -22,7 +22,7 @@ configureLogging(cfg):
 proc worker(id: int) {.thread.} =
   {.cast(gcsafe).}:
     var logger = newLogger(name = "worker")
-    withContext(%* {"ctxThread": id}):
+    withLogContext(%* {"ctxThread": id}):
       for i in 0 ..< messagesPerThread:
         logger.info(&"message {i} from thread {id}", seqNo=i, thread=id)
 
@@ -30,7 +30,7 @@ var threads: array[numThreads, Thread[int]]
 for i in 0 ..< numThreads:
   createThread(threads[i], worker, i)
 joinThreads(threads)
-flush()
+flushLogs()
 
 # -- Verify --
 
@@ -42,7 +42,7 @@ for line in logFile.lines:
   inc lineCount
   let t = j["extra"]["thread"].getInt()
   doAssert j["extra"]["ctxThread"].getInt() == t,
-    "withContext fields leaked between threads"
+    "withLogContext fields leaked between threads"
   doAssert j["extra"]["seqNo"].getInt() == nextSeq[t],
     "per-thread write order was not preserved"
   inc nextSeq[t]
