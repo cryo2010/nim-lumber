@@ -125,23 +125,28 @@ template configureLogging*(cfg, body: untyped) =
 
 proc flushLogs*() =
   ## Flush all output streams. Call this before exiting to ensure
-  ## buffered log data is written.
-  for o in outputs:
-    try:
-      o.stream.flush()
-    except CatchableError:
-      discard
+  ## buffered log data is written. Safe to call while other threads log.
+  withLock writeLock:
+    for o in outputs:
+      try:
+        o.stream.flush()
+      except CatchableError:
+        discard
 
 proc shutdownLogs*() =
   ## Flush and close all output streams; async writer threads are joined
   ## and file handles released. Call on graceful exit. Logging after this
-  ## point is discarded by the closed streams.
-  for o in outputs:
-    try:
-      o.stream.flush()
-      o.stream.close()
-    except CatchableError:
-      discard
+  ## point is discarded by the closed streams. Safe to call while other
+  ## threads log: the write lock keeps closing from racing an in-flight
+  ## record (an unsynchronized close of an AsyncStream mid-write is a
+  ## use-after-free of its channel).
+  withLock writeLock:
+    for o in outputs:
+      try:
+        o.stream.flush()
+        o.stream.close()
+      except CatchableError:
+        discard
 
 when defined(posix):
   import std/posix
@@ -156,7 +161,10 @@ proc shutdownLogsOnSignal*() =
   ## the automatic atexit flush. Applications with their own graceful
   ## shutdown should not use this (it overwrites the Ctrl-C hook and
   ## quits immediately); call `shutdownLogs` from their shutdown path
-  ## instead.
+  ## instead. Note that `shutdownLogs` takes the write lock: if the
+  ## signal lands on a thread that is inside a log call, the handler
+  ## deadlocks rather than corrupting stream state. Prefer a dedicated
+  ## shutdown path in threaded applications.
   setControlCHook(proc() {.noconv.} =
     shutdownLogs()
     quit(130)

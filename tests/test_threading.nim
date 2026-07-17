@@ -44,6 +44,35 @@ test "concurrent logging: intact lines, per-thread order, context isolation":
   check lineCount == numThreads * messagesPerThread
   removeFile(logFile)
 
+proc flusher(rounds: int) {.thread.} =
+  {.cast(gcsafe).}:
+    for i in 0 ..< rounds:
+      flushLogs()
+
+test "flushLogs is safe while other threads log":
+  # Regression: flushLogs iterated the outputs seq without the write
+  # lock, racing configureLogging commits and in-flight writes
+  removeFile(logFile)
+  configureLogging(cfg):
+    cfg.outputs = @[Output(stream: newFileStream(logFile, fmWrite))]
+
+  var threads: array[numThreads, Thread[int]]
+  for i in 0 ..< numThreads:
+    createThread(threads[i], worker, i)
+  var flushThread: Thread[int]
+  createThread(flushThread, flusher, 500)
+  joinThreads(threads)
+  joinThread(flushThread)
+  flushLogs()
+
+  var lineCount = 0
+  for line in logFile.lines:
+    if line.len == 0: continue
+    discard parseJson(line)  # raises on a torn line
+    inc lineCount
+  check lineCount == numThreads * messagesPerThread
+  removeFile(logFile)
+
 # One module-level logger with a persistent extra, shared by all threads:
 # the README's idiomatic setup. Record assembly (including the refcount
 # traffic on logger.extra) happens under the write lock, so this is safe
