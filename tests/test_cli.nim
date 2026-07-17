@@ -54,3 +54,17 @@ test "parseTimestamp parses Z and offset timestamps":
         parseTimestamp("2026-07-03T05:00:00-07:00")
   check parseTimestamp("2026-07-03T12:00:00Z") ==
         parseTimestamp("2026-07-03T14:00:00+02:00")
+
+test "parseTimestamp accepts fractional seconds":
+  # Regression: lumber's own timestamps carry milliseconds, which made
+  # timestamp filters fall back to string comparison
+  check parseTimestamp("2026-07-03T12:00:00.139Z") ==
+        parseTimestamp("2026-07-03T12:00:00Z")
+  check parseTimestamp("2026-07-03T05:00:00.5-07:00") ==
+        parseTimestamp("2026-07-03T12:00:00Z")
+
+test "timestamp filters compare epochs across formats":
+  let j = parseJson("""{"timestamp":"2026-07-03T15:27:17.139Z"}""")
+  # Mixed offset forms only compare correctly as parsed times, not strings
+  check matchesFilter(j, parseFilter("timestamp>2026-07-03T06:00:00-08:00"))
+  check not matchesFilter(j, parseFilter("timestamp<2026-07-03T12:00:00Z"))

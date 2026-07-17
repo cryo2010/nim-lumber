@@ -362,8 +362,19 @@ proc getField(j: JsonNode, key: string): JsonNode =
       result = extra.getOrDefault(key)
 
 proc parseTimestamp*(s: string): int64 =
-  ## Parses ISO 8601 timestamps to unix epoch. Supports Z, +HH:MM, -HH:MM offsets.
-  ## Raises ValueError for anything that is not an ISO 8601 timestamp.
+  ## Parses ISO 8601 timestamps to unix epoch. Supports Z, +HH:MM, -HH:MM
+  ## offsets; fractional seconds are accepted and ignored. Raises
+  ## ValueError for anything that is not an ISO 8601 timestamp.
+  var s = s
+  # Strip fractional seconds: lumber's own timestamps carry milliseconds,
+  # and filters against them must not silently degrade to string comparison
+  let dotIdx = s.rfind('.')
+  if dotIdx > 0:
+    var endIdx = dotIdx + 1
+    while endIdx < s.len and s[endIdx] in {'0'..'9'}:
+      inc endIdx
+    if endIdx > dotIdx + 1:
+      s = s[0 ..< dotIdx] & s[endIdx .. ^1]
   if s.endsWith("Z"):
     return s.parse("yyyy-MM-dd'T'HH:mm:ss'Z'", utc()).toTime().toUnix()
   # Try with offset like 2026-07-03T15:27:17-07:00. Anything shorter than a
