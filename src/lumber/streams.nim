@@ -81,17 +81,36 @@ proc timeRotateClose(s: Stream) {.nimcall.} =
     if rs.file != nil:
       rs.file.close()
 
-proc rotateTimeFiles(basePath: string, maxFiles: int) =
+proc isDatedBackup(fname, name, ext: string): bool =
+  ## Matches exactly "<name>.YYYY-MM-dd<ext>", the names TimeRotateStream
+  ## produces when it rotates. A loose prefix match would also catch
+  ## unrelated siblings like "<name>-other<ext>" or size-rotation backups
+  ## ("<name><ext>.1") and delete user data.
+  const dateLen = len("2000-01-01")
+  if fname.len != name.len + 1 + dateLen + ext.len:
+    return false
+  if not (fname.startsWith(name & ".") and fname.endsWith(ext)):
+    return false
+  let date = fname[name.len + 1 ..< name.len + 1 + dateLen]
+  for i, c in date:
+    if i == 4 or i == 7:
+      if c != '-': return false
+    elif c notin {'0'..'9'}:
+      return false
+  true
+
+proc rotateTimeFiles*(basePath: string, maxFiles: int) =
+  ## Deletes the oldest dated backups of `basePath` until at most `maxFiles`
+  ## remain. Only files named "<name>.YYYY-MM-dd<ext>" are considered.
+  ## Called by `TimeRotateStream` on rotation; exported for testing.
   let (dir, name, ext) = splitFile(basePath)
   let searchDir = if dir.len > 0: dir else: "."
   var dated: seq[string] = @[]
   for kind, path in walkDir(searchDir):
-    if kind == pcFile:
-      let fname = extractFilename(path)
-      if fname.startsWith(name) and fname != name & ext and ext in fname:
-        dated.add(path)
+    if kind == pcFile and isDatedBackup(extractFilename(path), name, ext):
+      dated.add(path)
   dated.sort()
-  while dated.len >= maxFiles:
+  while dated.len > maxFiles:
     removeFile(dated[0])
     dated.delete(0)
 

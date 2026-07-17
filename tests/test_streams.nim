@@ -1,6 +1,7 @@
 import unittest
 import std/[os, streams, strutils, strformat]
 import lumber
+from lumber/streams import rotateTimeFiles
 
 # -- Size-based rotation --
 
@@ -54,6 +55,33 @@ test "daily file stream appends to an existing file on reopen":
   let content = readFile(base)
   check content.contains("first")
   check content.contains("second")
+
+test "time rotation prunes only its own dated backups":
+  # Regression: the backup matcher was a loose prefix check that also
+  # matched unrelated siblings (app-other.log, application.log) and
+  # size-rotation backups (app.log.1), deleting user data. It also kept
+  # one backup fewer than maxFiles.
+  let dir = getTempDir() / "lumber_test_rotatetime"
+  removeDir(dir)
+  createDir(dir)
+  defer: removeDir(dir)
+  let base = dir / "app.log"
+  writeFile(base, "current\n")
+  let unrelated = [dir / "app-other.log", dir / "application.log",
+                   dir / "app.log.1", dir / "app.not-a-date.log"]
+  for p in unrelated:
+    writeFile(p, "unrelated\n")
+  for d in ["2026-07-08", "2026-07-09", "2026-07-10", "2026-07-11"]:
+    writeFile(dir / "app." & d & ".log", d & "\n")
+  rotateTimeFiles(base, maxFiles = 2)
+  check fileExists(base)
+  for p in unrelated:
+    check fileExists(p)
+  # The oldest dated backups are pruned down to exactly maxFiles
+  check not fileExists(dir / "app.2026-07-08.log")
+  check not fileExists(dir / "app.2026-07-09.log")
+  check fileExists(dir / "app.2026-07-10.log")
+  check fileExists(dir / "app.2026-07-11.log")
 
 # -- Buffered stream (hybrid flush strategy) --
 
