@@ -603,6 +603,15 @@ proc resolveTimezone(tz: string): string =
 
 const defaultTimeFormat = "%Y-%m-%dT%H:%M:%S"
 
+proc setupTimezone(tz: string) =
+  ## The timezone is fixed for the whole run: resolve it and set TZ once
+  ## before the read loop instead of mutating the environment (and calling
+  ## tzset) twice per rendered line.
+  if tz.toLowerAscii() != "local":
+    let name = if tz.toLowerAscii() == "utc": "UTC" else: resolveTimezone(tz)
+    putEnv("TZ", name)
+    tzset()
+
 proc formatWithTz(epoch: int64, timeFmt: string): (string, string, string) =
   ## Returns (formatted timestamp, offset, timezone abbreviation) using current TZ
   var t = CTime(epoch)
@@ -639,29 +648,16 @@ proc formatTimestamp(raw: string, tz: string, timeFmt: string): string =
       parseStr = raw[0 ..< dotIdx] & "Z"
     let dt = parseStr.parse("yyyy-MM-dd'T'HH:mm:ss'Z'", utc())
     let epoch = dt.toTime().toUnix()
+    # setupTimezone already pointed TZ at the requested zone, so
+    # formatWithTz renders it directly
     if tz.toLowerAscii() == "utc":
       if timeFmt == defaultTimeFormat:
         return dt.format("yyyy-MM-dd'T'HH:mm:ss") & msStr & "Z UTC"
       else:
-        let prev = getEnv("TZ")
-        putEnv("TZ", "UTC")
-        tzset()
         let (ts, _, _) = formatWithTz(epoch, timeFmt)
-        if prev.len > 0: putEnv("TZ", prev)
-        else: delEnv("TZ")
-        tzset()
         return ts & msStr & " UTC"
-    elif tz.toLowerAscii() == "local":
-      let (ts, offset, abbr) = formatWithTz(epoch, timeFmt)
-      return ts & msStr & offset & " " & abbr
     else:
-      let prev = getEnv("TZ")
-      putEnv("TZ", resolveTimezone(tz))
-      tzset()
       let (ts, offset, abbr) = formatWithTz(epoch, timeFmt)
-      if prev.len > 0: putEnv("TZ", prev)
-      else: delEnv("TZ")
-      tzset()
       return ts & msStr & offset & " " & abbr
   except CatchableError:
     return raw
@@ -820,6 +816,8 @@ when isMainModule:
   if opts.noColor or getEnv("NO_COLOR").len > 0 or getEnv("CI").len > 0:
     stripAnsi(theme)
     reset = ""
+
+  setupTimezone(tz)
 
   var line: string
   while stdin.readLine(line):
