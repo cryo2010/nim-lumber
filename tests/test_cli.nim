@@ -34,6 +34,13 @@ test "missing or unknown levels pass the level filter":
   check not passesLevel("INFO", LogLevel.WARN)
   check not passesLevel("trace", LogLevel.DEBUG)
 
+test "GMT resolves to a DST-free zone":
+  # Regression: GMT mapped to Europe/London, which renders as BST (+01:00)
+  # in summer even though GMT is UTC year-round
+  check resolveTimezone("GMT") == "Etc/GMT"
+  check resolveTimezone("BST") == "Europe/London"
+  check resolveTimezone("America/Bogota") == "America/Bogota"
+
 # -- Argument parsing --
 
 test "explicit flags are tracked so they can override config values":

@@ -585,14 +585,15 @@ proc localtime_r(clock: ptr CTime, result: var Tm): ptr Tm {.importc, header: "<
 proc c_strftime(buf: cstring, maxsize: csize_t, fmt: cstring, tp: ptr Tm): csize_t {.importc: "strftime", header: "<time.h>".}
 proc tzset() {.importc, header: "<time.h>".}
 
-proc resolveTimezone(tz: string): string =
+proc resolveTimezone*(tz: string): string =
   ## Maps common abbreviations to IANA timezone names
   case tz.toUpperAscii()
   of "PST", "PDT", "PT": "America/Los_Angeles"
   of "MST", "MDT", "MT": "America/Denver"
   of "CST", "CDT", "CT": "America/Chicago"
   of "EST", "EDT", "ET": "America/New_York"
-  of "GMT": "Europe/London"
+  # GMT is UTC year-round; Europe/London would render as BST in summer
+  of "GMT": "Etc/GMT"
   of "BST": "Europe/London"
   of "CET", "CEST": "Europe/Berlin"
   of "EET", "EEST": "Europe/Helsinki"
