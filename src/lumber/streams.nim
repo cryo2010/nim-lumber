@@ -3,7 +3,7 @@
 ## These are general-purpose `Stream` implementations with no dependency on
 ## the logger itself. `import lumber` re-exports everything here.
 
-import std/[streams, times, os, strutils, algorithm]
+import std/[streams, times, os, strutils, algorithm, atomics]
 import ./types
 
 # -- Rotating file streams --
@@ -220,7 +220,7 @@ type
   AsyncStream* = ref object of Stream
     state: ptr AsyncState
     thread: Thread[ptr AsyncState]
-    closed: bool
+    closed: Atomic[bool]
 
 proc asyncWriterLoop(state: ptr AsyncState) {.thread.} =
   while true:
@@ -241,7 +241,7 @@ proc asyncWriterLoop(state: ptr AsyncState) {.thread.} =
 proc asyncWrite(s: Stream, buffer: pointer, bufLen: int) {.nimcall.} =
   {.cast(raises: []).}: {.cast(tags: []).}:
     let a = AsyncStream(s)
-    if a.closed: return
+    if a.closed.load(moAcquire): return
     var data = newString(bufLen)
     copyMem(addr data[0], buffer, bufLen)
     a.state.chan.send(AsyncMsg(data: data))
@@ -249,14 +249,14 @@ proc asyncWrite(s: Stream, buffer: pointer, bufLen: int) {.nimcall.} =
 proc asyncFlush(s: Stream) {.nimcall.} =
   {.cast(raises: []).}: {.cast(tags: []).}:
     let a = AsyncStream(s)
-    if a.closed: return
+    if a.closed.load(moAcquire): return
     a.state.chan.send(AsyncMsg(isFlush: true))
 
 proc asyncClose(s: Stream) {.nimcall.} =
   {.cast(raises: []).}: {.cast(tags: []).}:
     let a = AsyncStream(s)
-    if a.closed: return
-    a.closed = true
+    # exchange makes a second close a no-op instead of a double free
+    if a.closed.exchange(true, moAcquireRelease): return
     a.state.chan.send(AsyncMsg(isClose: true))
     joinThread(a.thread)
     a.state.chan.close()

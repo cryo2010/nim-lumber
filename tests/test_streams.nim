@@ -172,3 +172,15 @@ test "async stream flushes when its queue drains, without close":
       check line.startsWith("{")
       inc lines
   check lines == 100
+
+test "async stream close is idempotent and drops later writes":
+  let path = getTempDir() / "lumber_test_async2.log"
+  removeFile(path)
+  defer: removeFile(path)
+  let async = newAsyncStream(newFileStream(path, fmWrite))
+  async.writeLine("data")
+  async.close()
+  async.close()               # second close must be a no-op, not a double free
+  async.writeLine("dropped")  # writes after close are discarded
+  async.flush()
+  check readFile(path) == "data\n"
