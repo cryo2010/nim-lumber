@@ -34,27 +34,50 @@ proc rotateFiles(basePath: string, maxFiles: int) =
   if fileExists(basePath):
     moveFile(basePath, basePath & ".1")
 
+# The rotate/buffered/async impls promise raises: [] to the Stream vtable,
+# but file I/O genuinely fails (disk full, permissions). A logger must not
+# take the application down from a write path, and letting an exception
+# escape a raises: [] cast is undefined behavior, so every impl catches
+# CatchableError, drops the data, and tries to recover on the next call.
+
 proc sizeRotateClose(s: Stream) {.nimcall.} =
   {.cast(raises: []).}: {.cast(tags: []).}:
     let rs = SizeRotateStream(s)
     if rs.file != nil:
-      rs.file.close()
+      try:
+        rs.file.close()
+      except CatchableError:
+        discard
+      rs.file = nil
 
 proc sizeRotateWrite(s: Stream, buffer: pointer, bufLen: int) {.nimcall.} =
   {.cast(raises: []).}: {.cast(tags: []).}:
+    if bufLen <= 0: return
     let rs = SizeRotateStream(s)
-    if rs.currentSize + bufLen.int64 > rs.maxBytes:
-      rs.file.close()
-      rotateFiles(rs.basePath, rs.maxFiles)
-      rs.file = open(rs.basePath, fmWrite)
-      rs.currentSize = 0
-    discard rs.file.writeBuffer(buffer, bufLen)
-    rs.currentSize += bufLen.int64
+    try:
+      if rs.file != nil and rs.currentSize + bufLen.int64 > rs.maxBytes:
+        rs.file.close()
+        rs.file = nil  # never write through a closed handle if rotation fails
+        rotateFiles(rs.basePath, rs.maxFiles)
+        rs.file = open(rs.basePath, fmWrite)
+        rs.currentSize = 0
+      if rs.file == nil:
+        # A previous rotation failed; reopen instead of dropping forever
+        rs.file = open(rs.basePath, fmAppend)
+        rs.currentSize = getFileSize(rs.basePath)
+      discard rs.file.writeBuffer(buffer, bufLen)
+      rs.currentSize += bufLen.int64
+    except CatchableError:
+      discard
 
 proc sizeRotateFlush(s: Stream) {.nimcall.} =
   {.cast(raises: []).}: {.cast(tags: []).}:
     let rs = SizeRotateStream(s)
-    rs.file.flushFile()
+    if rs.file != nil:
+      try:
+        rs.file.flushFile()
+      except CatchableError:
+        discard
 
 proc newRollingFileStream*(path: string, maxBytes: int64 = 10_000_000,
                           maxFiles: int = 5): SizeRotateStream =
@@ -79,7 +102,11 @@ proc timeRotateClose(s: Stream) {.nimcall.} =
   {.cast(raises: []).}: {.cast(tags: []).}:
     let rs = TimeRotateStream(s)
     if rs.file != nil:
-      rs.file.close()
+      try:
+        rs.file.close()
+      except CatchableError:
+        discard
+      rs.file = nil
 
 proc isDatedBackup(fname, name, ext: string): bool =
   ## Matches exactly "<name>.YYYY-MM-dd<ext>", the names TimeRotateStream
@@ -116,25 +143,40 @@ proc rotateTimeFiles*(basePath: string, maxFiles: int) =
 
 proc timeRotateWrite(s: Stream, buffer: pointer, bufLen: int) {.nimcall.} =
   {.cast(raises: []).}: {.cast(tags: []).}:
+    if bufLen <= 0: return
     let rs = TimeRotateStream(s)
-    let today = dateSuffix()
-    if today != rs.currentDate:
-      rs.file.close()
-      let (_, name, ext) = splitFile(rs.basePath)
-      let dir = parentDir(rs.basePath)
-      let datedName = if dir.len > 0: dir / name & "." & rs.currentDate & ext
-                      else: name & "." & rs.currentDate & ext
-      if fileExists(rs.basePath):
-        moveFile(rs.basePath, datedName)
-      rotateTimeFiles(rs.basePath, rs.maxFiles)
-      rs.file = open(rs.basePath, fmWrite)
-      rs.currentDate = today
-    discard rs.file.writeBuffer(buffer, bufLen)
+    try:
+      let today = dateSuffix()
+      if rs.file != nil and today != rs.currentDate:
+        rs.file.close()
+        rs.file = nil  # never write through a closed handle if rotation fails
+        let (_, name, ext) = splitFile(rs.basePath)
+        let dir = parentDir(rs.basePath)
+        let datedName = if dir.len > 0: dir / name & "." & rs.currentDate & ext
+                        else: name & "." & rs.currentDate & ext
+        if fileExists(rs.basePath):
+          moveFile(rs.basePath, datedName)
+        rotateTimeFiles(rs.basePath, rs.maxFiles)
+        # Mark the rotation done before reopening: if open fails, the next
+        # write must not redo the move with a stale date
+        rs.currentDate = today
+        rs.file = open(rs.basePath, fmWrite)
+      if rs.file == nil:
+        # A previous rotation failed; reopen instead of dropping forever
+        rs.file = open(rs.basePath, fmAppend)
+        rs.currentDate = dateSuffix()
+      discard rs.file.writeBuffer(buffer, bufLen)
+    except CatchableError:
+      discard
 
 proc timeRotateFlush(s: Stream) {.nimcall.} =
   {.cast(raises: []).}: {.cast(tags: []).}:
     let rs = TimeRotateStream(s)
-    rs.file.flushFile()
+    if rs.file != nil:
+      try:
+        rs.file.flushFile()
+      except CatchableError:
+        discard
 
 proc newDailyFileStream*(path: string, maxFiles: int = 30): TimeRotateStream =
   new(result)
@@ -166,14 +208,20 @@ const defaultFlushIntervalMs* = 1000
 proc bufFlush(s: Stream) {.nimcall.} =
   {.cast(raises: []).}: {.cast(tags: []).}:
     let bs = BufferedStream(s)
-    if bs.buf.len > 0:
-      bs.inner.write(bs.buf)
+    try:
+      if bs.buf.len > 0:
+        bs.inner.write(bs.buf)
+        bs.buf.setLen(0)
+      bs.inner.flush()
+    except CatchableError:
+      # Drop the buffer rather than grow without bound while the inner
+      # stream is stuck
       bs.buf.setLen(0)
-    bs.inner.flush()
     bs.lastFlushTime = epochTime()
 
 proc bufWrite(s: Stream, buffer: pointer, bufLen: int) {.nimcall.} =
   {.cast(raises: []).}: {.cast(tags: []).}:
+    if bufLen <= 0: return
     let bs = BufferedStream(s)
     let oldLen = bs.buf.len
     bs.buf.setLen(oldLen + bufLen)
@@ -189,7 +237,10 @@ proc bufClose(s: Stream) {.nimcall.} =
   {.cast(raises: []).}: {.cast(tags: []).}:
     let bs = BufferedStream(s)
     bufFlush(s)
-    bs.inner.close()
+    try:
+      bs.inner.close()
+    except CatchableError:
+      discard
 
 proc newBufferedStream*(inner: Stream, maxSize: int = defaultBufferSize,
                         flushLevel: LogLevel = LogLevel.ERROR,
@@ -223,23 +274,30 @@ type
     closed: Atomic[bool]
 
 proc asyncWriterLoop(state: ptr AsyncState) {.thread.} =
+  # Inner-stream failures are swallowed: an exception escaping a thread
+  # aborts the whole process, and a logger must not do that on disk-full
   while true:
     let msg = state.chan.recv()
-    if msg.isClose:
-      state.inner.flush()
-      state.inner.close()
-      break
-    elif msg.isFlush:
-      state.inner.flush()
-    else:
-      state.inner.write(msg.data)
-      # Batch while there is backlog; flush the moment the queue drains so
-      # data never sits in the inner stream's buffer while the logger is idle
-      if state.chan.peek() == 0:
+    try:
+      if msg.isClose:
         state.inner.flush()
+        state.inner.close()
+      elif msg.isFlush:
+        state.inner.flush()
+      else:
+        state.inner.write(msg.data)
+        # Batch while there is backlog; flush the moment the queue drains so
+        # data never sits in the inner stream's buffer while the logger is idle
+        if state.chan.peek() == 0:
+          state.inner.flush()
+    except CatchableError:
+      discard
+    if msg.isClose:
+      break
 
 proc asyncWrite(s: Stream, buffer: pointer, bufLen: int) {.nimcall.} =
   {.cast(raises: []).}: {.cast(tags: []).}:
+    if bufLen <= 0: return
     let a = AsyncStream(s)
     if a.closed.load(moAcquire): return
     var data = newString(bufLen)
