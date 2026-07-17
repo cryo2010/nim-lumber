@@ -1,6 +1,7 @@
 import unittest
 import std/[os, streams, strutils, strformat]
 import lumber
+from lumber/streams import rotateTimeFiles
 
 # -- Size-based rotation --
 
@@ -54,6 +55,60 @@ test "daily file stream appends to an existing file on reopen":
   let content = readFile(base)
   check content.contains("first")
   check content.contains("second")
+
+test "time rotation prunes only its own dated backups":
+  # Regression: the backup matcher was a loose prefix check that also
+  # matched unrelated siblings (app-other.log, application.log) and
+  # size-rotation backups (app.log.1), deleting user data. It also kept
+  # one backup fewer than maxFiles.
+  let dir = getTempDir() / "lumber_test_rotatetime"
+  removeDir(dir)
+  createDir(dir)
+  defer: removeDir(dir)
+  let base = dir / "app.log"
+  writeFile(base, "current\n")
+  let unrelated = [dir / "app-other.log", dir / "application.log",
+                   dir / "app.log.1", dir / "app.not-a-date.log"]
+  for p in unrelated:
+    writeFile(p, "unrelated\n")
+  for d in ["2026-07-08", "2026-07-09", "2026-07-10", "2026-07-11"]:
+    writeFile(dir / "app." & d & ".log", d & "\n")
+  rotateTimeFiles(base, maxFiles = 2)
+  check fileExists(base)
+  for p in unrelated:
+    check fileExists(p)
+  # The oldest dated backups are pruned down to exactly maxFiles
+  check not fileExists(dir / "app.2026-07-08.log")
+  check not fileExists(dir / "app.2026-07-09.log")
+  check fileExists(dir / "app.2026-07-10.log")
+  check fileExists(dir / "app.2026-07-11.log")
+
+when defined(posix):
+  import std/posix
+
+  test "rolling stream survives a failed rotation and recovers":
+    # Regression: rotation failures (disk full, permissions) escaped the
+    # raises: [] stream impl and crashed the app from a log write
+    if geteuid() == 0:
+      skip()  # root ignores directory permissions
+    else:
+      let dir = getTempDir() / "lumber_test_rotfail"
+      removeDir(dir)
+      createDir(dir)
+      defer:
+        setFilePermissions(dir, {fpUserRead, fpUserWrite, fpUserExec})
+        removeDir(dir)
+      let base = dir / "app.log"
+      let s = newRollingFileStream(base, maxBytes = 100, maxFiles = 2)
+      s.writeLine("a".repeat(90))
+      # Make the directory unwritable so the rotation rename and reopen fail
+      setFilePermissions(dir, {fpUserRead, fpUserExec})
+      s.writeLine("b".repeat(90))  # triggers rotation: dropped, must not raise
+      s.writeLine("c".repeat(90))  # still failing: dropped, must not raise
+      setFilePermissions(dir, {fpUserRead, fpUserWrite, fpUserExec})
+      s.writeLine("recovered")
+      s.close()
+      check readFile(base).contains("recovered")
 
 # -- Buffered stream (hybrid flush strategy) --
 
@@ -144,3 +199,35 @@ test "async stream flushes when its queue drains, without close":
       check line.startsWith("{")
       inc lines
   check lines == 100
+
+type FailStream = ref object of Stream
+
+proc failWrite(s: Stream, buffer: pointer, bufLen: int) {.nimcall.} =
+  raise newException(IOError, "disk full")
+
+proc failFlush(s: Stream) {.nimcall.} = discard
+proc failClose(s: Stream) {.nimcall.} = discard
+
+test "async stream survives inner write failures":
+  # Regression: an exception escaping the writer thread aborted the
+  # whole process on the first inner-stream failure
+  let fs = FailStream()
+  fs.writeDataImpl = failWrite
+  fs.flushImpl = failFlush
+  fs.closeImpl = failClose
+  let async = newAsyncStream(fs)
+  async.writeLine("first failure")
+  async.writeLine("second failure")
+  async.close()  # writer thread must still be alive to join
+
+test "async stream close is idempotent and drops later writes":
+  let path = getTempDir() / "lumber_test_async2.log"
+  removeFile(path)
+  defer: removeFile(path)
+  let async = newAsyncStream(newFileStream(path, fmWrite))
+  async.writeLine("data")
+  async.close()
+  async.close()               # second close must be a no-op, not a double free
+  async.writeLine("dropped")  # writes after close are discarded
+  async.flush()
+  check readFile(path) == "data\n"

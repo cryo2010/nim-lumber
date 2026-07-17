@@ -16,7 +16,7 @@ A JSON logger for Nim with a built-in CLI prettifier.
 - **Contextual logging** - attach fields per logger, inherit them through child loggers, or scope them to a call stack with thread-local `withLogContext`
 - **Middleware** - enrich, transform, or suppress log records at runtime; rate limiter, sampler, and redaction included
 - **Flexible outputs** - write to stdout, files, or any custom `Stream` simultaneously, with built-in size/time rotation, buffering, a background-thread async writer, and automatic flush on exit
-- **Thread-safe** - safe for concurrent use from multiple threads
+- **Thread-safe** - safe for concurrent use from multiple threads: records are assembled and written under a lock, so a single module-level logger (the idiomatic setup) can be shared by any number of threads under the default memory manager; see [Outputs and Routing](#outputs-and-routing) for the one caveat about reconfiguring from short-lived threads
 - **Minimal dependencies** - the Nim standard library plus a single pure-Nim package ([regex](https://github.com/nitely/nim-regex)), compiled in statically; no C libraries or runtime dependencies
 - **CLI prettifier** - pipe JSON logs through the `lumber` binary for colored, human-readable output with level filtering, field filtering, timezone support, and customizable format/colors via TOML config
 
@@ -549,6 +549,8 @@ Reconfigure logging with `configureLogging`. The first argument names the variab
 
 Concurrent `configureLogging` calls serialize, each seeing the previous one's committed state, and logging is never blocked while a configuration block runs. Two rules: a block must not call `configureLogging` itself (this raises a `Defect`, since nested commits would silently lose updates), and reconfiguration should happen from long-lived threads, typically the main thread. The second rule comes from Nim's default memory management (ORC), which registers reference bookkeeping in thread-local state: a short-lived thread that replaces outputs or middleware drops the old references on its own heap and can corrupt cycle collection after the thread exits. Compiling with `--mm:atomicArc` removes this constraint entirely (atomic reference counts, no thread-local cycle bookkeeping); CI runs the test suite under `orc`, `arc`, and `atomicArc`.
 
+Logging itself has no such constraint: records are assembled and written while holding the internal write lock, which also covers the reference-count traffic on a shared logger's `extra`, so sharing loggers across threads is safe under all three memory managers. Read the current outputs with `outputs()` (a snapshot); to change them, always go through `configureLogging`, and shut down with `shutdownLogs()` rather than closing streams directly, so closing cannot race an in-flight write on another thread.
+
 ```nim
 import std/streams
 
@@ -641,9 +643,8 @@ configureLogging(cfg):
     Output(stream: newAsyncStream(newRollingFileStream("app.log"))),
   ]
 
-# Close to flush and join the writer thread
-for o in outputs:
-  o.stream.close()
+# Close to flush and join the writer threads
+shutdownLogs()
 ```
 
 ## CLI Prettifier
@@ -861,8 +862,7 @@ dbLogger.error("Failed to connect to database")
 
 logger.fatal("Shutting down")
 
-for o in outputs:
-  o.stream.close()
+shutdownLogs()
 ```
 
 ### Output (also written to `app.log`; ERROR and FATAL additionally go to `error.log`):

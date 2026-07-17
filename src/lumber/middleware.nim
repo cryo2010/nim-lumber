@@ -18,6 +18,11 @@ proc newRateLimiter*(window: float = 1.0, maxBurst: int = 5): LogMiddleware =
   ## from the same file:line are emitted. Resets after the window expires.
   ## When messages were suppressed, the next emitted message from that
   ## source includes a `suppressed` field with the count of dropped messages.
+  ##
+  ## Suppressed counts survive window resets so they can be reported on the
+  ## next emit; a source that stops logging entirely retains its last count
+  ## until then. Memory is bounded by the number of distinct file:line
+  ## sources, not by log volume.
   var counts = initTable[string, int]()
   var dropped = initTable[string, int]()
   var lastReset = epochTime()
@@ -32,7 +37,11 @@ proc newRateLimiter*(window: float = 1.0, maxBurst: int = 5): LogMiddleware =
     if count <= maxBurst:
       let suppressed = dropped.getOrDefault(key, 0)
       if suppressed > 0:
-        record.extra["suppressed"] = %suppressed
+        # Earlier middleware may have replaced extra with nil
+        if record.extra.isNil:
+          record.extra = newJObject()
+        if record.extra.kind == JObject:
+          record.extra["suppressed"] = %suppressed
         dropped.del(key)
       return true
     else:
@@ -73,32 +82,68 @@ const defaultRedactKeys* = @[
   "passwd", "password", "pin", "secret", "ssn", "token",
 ]
 
+proc redactKeysIn(node: JsonNode, redactKeys: seq[string], placeholder: string) =
+  ## Replaces the values of matching keys anywhere in nested objects and
+  ## arrays. Redaction that stopped at the top level would leak the same
+  ## secret one nesting level down.
+  case node.kind
+  of JObject:
+    for key, val in node.pairs:
+      if key in redactKeys:
+        node[key] = %placeholder
+      else:
+        redactKeysIn(val, redactKeys, placeholder)
+  of JArray:
+    for elem in node.elems:
+      redactKeysIn(elem, redactKeys, placeholder)
+  else:
+    discard
+
 proc newRedactor*(keys: seq[string] = @[], placeholder: string = "[REDACTED]"): LogMiddleware =
   ## Creates middleware that replaces the values of specified extra field keys
-  ## with a placeholder string. Useful for removing sensitive data like passwords,
-  ## tokens, or PII from log output.
+  ## with a placeholder string, including keys inside nested objects and
+  ## arrays. Useful for removing sensitive data like passwords, tokens, or
+  ## PII from log output.
   ##
   ## If `keys` is empty, uses a built-in default list of common sensitive field
   ## names (password, token, apiKey, ssn, creditCard, etc.).
   ## If `keys` is provided, it completely overrides the defaults.
   let redactKeys = if keys.len > 0: keys else: defaultRedactKeys
   result = proc(record: var LogRecord): bool =
-    if record.extra.kind == JObject:
-      for key in redactKeys:
-        if record.extra.hasKey(key):
-          record.extra[key] = %placeholder
+    if not record.extra.isNil:
+      redactKeysIn(record.extra, redactKeys, placeholder)
     true
 
+proc redactPatternIn(node: JsonNode, pattern: Regex2, placeholder: string) =
+  ## Replaces pattern matches in string values anywhere in nested objects
+  ## and arrays.
+  case node.kind
+  of JObject:
+    for key, val in node.pairs:
+      if val.kind == JString:
+        let replaced = val.getStr().replace(pattern, placeholder)
+        if replaced != val.getStr():
+          node[key] = %replaced
+      else:
+        redactPatternIn(val, pattern, placeholder)
+  of JArray:
+    for i in 0 ..< node.len:
+      if node[i].kind == JString:
+        let replaced = node[i].getStr().replace(pattern, placeholder)
+        if replaced != node[i].getStr():
+          node.elems[i] = %replaced
+      else:
+        redactPatternIn(node[i], pattern, placeholder)
+  else:
+    discard
+
 proc newPatternRedactor*(pattern: Regex2, placeholder: string = "[REDACTED]"): LogMiddleware =
-  ## Creates middleware that scans all string values in extra fields and the
-  ## message, replacing any match of `pattern` with the placeholder.
-  ## Useful for redacting credit card numbers, API keys, emails, etc.
+  ## Creates middleware that scans all string values in extra fields
+  ## (including nested objects and arrays) and the message, replacing any
+  ## match of `pattern` with the placeholder. Useful for redacting credit
+  ## card numbers, API keys, emails, etc.
   result = proc(record: var LogRecord): bool =
     record.message = record.message.replace(pattern, placeholder)
-    if record.extra.kind == JObject:
-      for key, val in record.extra.pairs:
-        if val.kind == JString:
-          let replaced = val.getStr().replace(pattern, placeholder)
-          if replaced != val.getStr():
-            record.extra[key] = %replaced
+    if not record.extra.isNil:
+      redactPatternIn(record.extra, pattern, placeholder)
     true

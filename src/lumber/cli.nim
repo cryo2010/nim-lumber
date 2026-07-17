@@ -253,6 +253,14 @@ proc levelOrd(level: string): int =
   of "FATAL": 5
   else: -1
 
+proc passesLevel*(jLevel: string, minLevel: LogLevel): bool =
+  ## Whether a line with level `jLevel` passes the `--level` filter.
+  ## A missing or unrecognized level always passes: non-JSON lines are
+  ## echoed verbatim, so valid JSON without a known level must not be
+  ## silently dropped either.
+  let lo = levelOrd(jLevel)
+  lo < 0 or lo >= ord(minLevel)
+
 const Help = """
 lumber - JSON log prettifier
 
@@ -306,27 +314,31 @@ Examples:
   myapp | lumber --tz PST"""
 
 type
-  FilterOp = enum
+  FilterOp* = enum
     opEq, opNeq, opGt, opGte, opLt, opLte, opRegex
 
-  Filter = object
+  Filter* = object
     key: string
     op: FilterOp
     value: string
     regex: Regex2
 
-  CliOptions = object
-    level: LogLevel
-    tz: string
-    filters: seq[Filter]
-    highlights: seq[Regex2]
-    pretty: bool
-    format: string
-    timeFormat: string
-    noColor: bool
-    configPath: string
+  CliOptions* = object
+    level*: LogLevel
+    levelSet*: bool  # --level was passed; distinguishes an explicit
+                     # default (--level trace) from "not passed" so it
+                     # can still override a config file value
+    tz*: string
+    tzSet*: bool     # same for --tz local
+    filters*: seq[Filter]
+    highlights*: seq[Regex2]
+    pretty*: bool
+    format*: string
+    timeFormat*: string
+    noColor*: bool
+    configPath*: string
 
-proc parseFilter(expr: string): Filter =
+proc parseFilter*(expr: string): Filter =
   # Order matters — check longer operators first
   for (op, token) in [(opNeq, "!="), (opGte, ">="), (opLte, "<="),
                        (opGt, ">"), (opLt, "<"), (opRegex, "~"), (opEq, "=")]:
@@ -349,21 +361,36 @@ proc getField(j: JsonNode, key: string): JsonNode =
     if not extra.isNil and extra.kind == JObject:
       result = extra.getOrDefault(key)
 
-proc parseTimestamp(s: string): int64 =
-  ## Parses ISO 8601 timestamps to unix epoch. Supports Z, +HH:MM, -HH:MM offsets.
+proc parseTimestamp*(s: string): int64 =
+  ## Parses ISO 8601 timestamps to unix epoch. Supports Z, +HH:MM, -HH:MM
+  ## offsets; fractional seconds are accepted and ignored. Raises
+  ## ValueError for anything that is not an ISO 8601 timestamp.
+  var s = s
+  # Strip fractional seconds: lumber's own timestamps carry milliseconds,
+  # and filters against them must not silently degrade to string comparison
+  let dotIdx = s.rfind('.')
+  if dotIdx > 0:
+    var endIdx = dotIdx + 1
+    while endIdx < s.len and s[endIdx] in {'0'..'9'}:
+      inc endIdx
+    if endIdx > dotIdx + 1:
+      s = s[0 ..< dotIdx] & s[endIdx .. ^1]
   if s.endsWith("Z"):
     return s.parse("yyyy-MM-dd'T'HH:mm:ss'Z'", utc()).toTime().toUnix()
-  # Try with offset like 2026-07-03T15:27:17-07:00
-  let sign = if s[^6] == '+': 1 elif s[^6] == '-': -1 else: 0
-  if sign != 0 and s[^3] == ':':
-    let base = s[0 ..< ^6].parse("yyyy-MM-dd'T'HH:mm:ss", utc())
-    let hours = parseInt(s[^5 .. ^4])
-    let mins = parseInt(s[^2 .. ^1])
-    let offsetSecs = sign * (hours * 3600 + mins * 60)
-    return base.toTime().toUnix() - offsetSecs.int64
+  # Try with offset like 2026-07-03T15:27:17-07:00. Anything shorter than a
+  # full timestamp with offset cannot be indexed from the back (short values
+  # such as "500" from numeric filters must raise ValueError, not IndexDefect)
+  if s.len >= 25 and s[^3] == ':':
+    let sign = if s[^6] == '+': 1 elif s[^6] == '-': -1 else: 0
+    if sign != 0:
+      let base = s[0 ..< ^6].parse("yyyy-MM-dd'T'HH:mm:ss", utc())
+      let hours = parseInt(s[^5 .. ^4])
+      let mins = parseInt(s[^2 .. ^1])
+      let offsetSecs = sign * (hours * 3600 + mins * 60)
+      return base.toTime().toUnix() - offsetSecs.int64
   raise newException(ValueError, "unrecognized timestamp format")
 
-proc matchesFilter(j: JsonNode, f: Filter): bool =
+proc matchesFilter*(j: JsonNode, f: Filter): bool =
   let node = getField(j, f.key)
   if node.isNil or node.kind == JNull:
     return f.op == opNeq  # missing field only matches !=
@@ -471,11 +498,12 @@ proc getOptVal(p: var OptParser): string =
     else:
       return ""
 
-proc parseArgs(): CliOptions =
+proc parseArgs*(args: seq[string] = @[]): CliOptions =
+  ## Parses `args`; an empty seq reads the process command line.
   result = CliOptions(level: LogLevel.TRACE, tz: "local", filters: @[],
                       highlights: @[], pretty: false, format: "",
                       timeFormat: "", noColor: false, configPath: "")
-  var p = initOptParser()
+  var p = initOptParser(args)
   while true:
     p.next()
     case p.kind
@@ -498,6 +526,7 @@ proc parseArgs(): CliOptions =
           quit(1)
         try:
           result.level = parseEnum[LogLevel](val.toUpperAscii())
+          result.levelSet = true
         except ValueError:
           stderr.writeLine("lumber: invalid level '" & val & "'. Expected: trace, debug, info, warn, error, fatal")
           quit(1)
@@ -519,6 +548,7 @@ proc parseArgs(): CliOptions =
           stderr.writeLine("lumber: --tz requires a value")
           quit(1)
         result.tz = val
+        result.tzSet = true
       of "format":
         let val = getOptVal(p)
         if val.len == 0:
@@ -555,14 +585,15 @@ proc localtime_r(clock: ptr CTime, result: var Tm): ptr Tm {.importc, header: "<
 proc c_strftime(buf: cstring, maxsize: csize_t, fmt: cstring, tp: ptr Tm): csize_t {.importc: "strftime", header: "<time.h>".}
 proc tzset() {.importc, header: "<time.h>".}
 
-proc resolveTimezone(tz: string): string =
+proc resolveTimezone*(tz: string): string =
   ## Maps common abbreviations to IANA timezone names
   case tz.toUpperAscii()
   of "PST", "PDT", "PT": "America/Los_Angeles"
   of "MST", "MDT", "MT": "America/Denver"
   of "CST", "CDT", "CT": "America/Chicago"
   of "EST", "EDT", "ET": "America/New_York"
-  of "GMT": "Europe/London"
+  # GMT is UTC year-round; Europe/London would render as BST in summer
+  of "GMT": "Etc/GMT"
   of "BST": "Europe/London"
   of "CET", "CEST": "Europe/Berlin"
   of "EET", "EEST": "Europe/Helsinki"
@@ -590,6 +621,15 @@ proc resolveTimezone(tz: string): string =
   else: tz  # Assume it's already an IANA name
 
 const defaultTimeFormat = "%Y-%m-%dT%H:%M:%S"
+
+proc setupTimezone(tz: string) =
+  ## The timezone is fixed for the whole run: resolve it and set TZ once
+  ## before the read loop instead of mutating the environment (and calling
+  ## tzset) twice per rendered line.
+  if tz.toLowerAscii() != "local":
+    let name = if tz.toLowerAscii() == "utc": "UTC" else: resolveTimezone(tz)
+    putEnv("TZ", name)
+    tzset()
 
 proc formatWithTz(epoch: int64, timeFmt: string): (string, string, string) =
   ## Returns (formatted timestamp, offset, timezone abbreviation) using current TZ
@@ -627,29 +667,16 @@ proc formatTimestamp(raw: string, tz: string, timeFmt: string): string =
       parseStr = raw[0 ..< dotIdx] & "Z"
     let dt = parseStr.parse("yyyy-MM-dd'T'HH:mm:ss'Z'", utc())
     let epoch = dt.toTime().toUnix()
+    # setupTimezone already pointed TZ at the requested zone, so
+    # formatWithTz renders it directly
     if tz.toLowerAscii() == "utc":
       if timeFmt == defaultTimeFormat:
         return dt.format("yyyy-MM-dd'T'HH:mm:ss") & msStr & "Z UTC"
       else:
-        let prev = getEnv("TZ")
-        putEnv("TZ", "UTC")
-        tzset()
         let (ts, _, _) = formatWithTz(epoch, timeFmt)
-        if prev.len > 0: putEnv("TZ", prev)
-        else: delEnv("TZ")
-        tzset()
         return ts & msStr & " UTC"
-    elif tz.toLowerAscii() == "local":
-      let (ts, offset, abbr) = formatWithTz(epoch, timeFmt)
-      return ts & msStr & offset & " " & abbr
     else:
-      let prev = getEnv("TZ")
-      putEnv("TZ", resolveTimezone(tz))
-      tzset()
       let (ts, offset, abbr) = formatWithTz(epoch, timeFmt)
-      if prev.len > 0: putEnv("TZ", prev)
-      else: delEnv("TZ")
-      tzset()
       return ts & msStr & offset & " " & abbr
   except CatchableError:
     return raw
@@ -801,20 +828,22 @@ when isMainModule:
 
   # CLI overrides take precedence
   if opts.pretty: pretty = true
-  if opts.tz != "local": tz = opts.tz
-  if opts.level != LogLevel.TRACE: level = opts.level
+  if opts.tzSet: tz = opts.tz
+  if opts.levelSet: level = opts.level
   if opts.format.len > 0: fmt = opts.format
   if opts.timeFormat.len > 0: timeFmt = opts.timeFormat
   if opts.noColor or getEnv("NO_COLOR").len > 0 or getEnv("CI").len > 0:
     stripAnsi(theme)
     reset = ""
 
+  setupTimezone(tz)
+
   var line: string
   while stdin.readLine(line):
     try:
       let j = parseJson(line)
       let jLevel = j.getOrDefault("level").getStr("")
-      if levelOrd(jLevel) < ord(level):
+      if not passesLevel(jLevel, level):
         continue
       if opts.filters.len > 0 and not matchesAllFilters(j, opts.filters):
         continue

@@ -65,7 +65,7 @@ test "reentrant configureLogging raises a Defect instead of deadlocking":
   # Configuration still works after the Defect
   configureLogging(cfg):
     cfg.outputs.add Output(stream: newCaptureStream())
-  check outputs.len == 2
+  check outputs().len == 2
 
 test "successive configureLogging calls compose":
   setupTest()
@@ -74,7 +74,7 @@ test "successive configureLogging calls compose":
   configureLogging(cfg):
     cfg.outputs.add Output(stream: newCaptureStream())
   # Each call started from the previous committed state
-  check outputs.len == 3
+  check outputs().len == 3
 
 test "records without fields carry no extra even with middleware":
   setupTest()
@@ -111,6 +111,31 @@ test "positional arguments are appended and braces are never interpreted":
   check parseJson(captured[0])["message"].getStr() == "Values: 1 2 3"
   check parseJson(captured[1])["message"].getStr() == "literal {0} braces {} x"
 
+test "exception alongside a field named error does not crash":
+  # Regression: addExceptionFields assumed an existing "error" key always
+  # had a companion "errorType" and raised KeyError for plain kwargs
+  setupTest()
+  var logger = newLogger(name = "test")
+  let e = newException(ValueError, "boom")
+  logger.error("failed", error="disk full", cause=e)
+  check captured.len == 1
+  let errs = parseJson(captured[0])["extra"]["errors"]
+  check errs.kind == JArray
+  check errs.len == 2
+  check errs[0]["error"].getStr() == "disk full"
+  check errs[1]["error"].getStr() == "boom"
+  check errs[1]["errorType"].getStr() == "ValueError"
+
+test "two exceptions become an errors array":
+  setupTest()
+  var logger = newLogger(name = "test")
+  logger.error("failed", newException(ValueError, "first"), newException(IOError, "second"))
+  check captured.len == 1
+  let errs = parseJson(captured[0])["extra"]["errors"]
+  check errs.len == 2
+  check errs[0]["errorType"].getStr() == "ValueError"
+  check errs[1]["errorType"].getStr() == "IOError"
+
 test "time block measures wall time, not CPU time":
   setupTest()
   var logger = newLogger(name = "test")
@@ -119,6 +144,18 @@ test "time block measures wall time, not CPU time":
   check captured.len == 1
   let ms = parseJson(captured[0])["extra"]["duration_ms"].getFloat()
   check ms >= 25.0
+
+test "time template reports the same filename form as the level macros":
+  # Regression: time used the bare instantiationInfo filename while the
+  # macros emit project-relative paths, breaking filename filtering
+  setupTest()
+  var logger = newLogger(name = "test")
+  logger.info("from macro")
+  logger.time("from time"):
+    discard
+  check captured.len == 2
+  check parseJson(captured[0])["filename"].getStr() ==
+        parseJson(captured[1])["filename"].getStr()
 
 test "rate limiter allows burst then suppresses":
   setupTest()
@@ -304,6 +341,72 @@ test "pattern redactor scrubs matching values":
   check strutils.find(msg, "4111") == -1
   check strutils.find(msg, "[REDACTED]") >= 0
   check j["extra"]["cardNum"].getStr() == "[REDACTED]"
+
+test "middleware-modified level emits valid JSON and does not raise":
+  # Regression: an unknown level string raised ValueError out of the log
+  # call, and level/timestamp were serialized unescaped
+  setupTest()
+  configureLogging(cfg):
+    cfg.middleware.add proc(record: var LogRecord): bool =
+      record.level = "AUDIT \"quoted\""
+      true
+  var logger = newLogger(name = "test")
+  logger.info("custom level")
+  check captured.len == 1
+  check parseJson(captured[0])["level"].getStr() == "AUDIT \"quoted\""
+
+test "redactor replaces keys inside nested objects and arrays":
+  setupTest()
+  configureLogging(cfg):
+    cfg.middleware.add newRedactor(@["password", "token"])
+  var logger = newLogger(name = "test")
+  logger.info("login",
+    user = %* {"name": "alice", "password": "secret", "session": {"token": "abc"}},
+    accounts = %* [{"password": "p1"}, {"password": "p2"}])
+  check captured.len == 1
+  let extra = parseJson(captured[0])["extra"]
+  check extra["user"]["name"].getStr() == "alice"
+  check extra["user"]["password"].getStr() == "[REDACTED]"
+  check extra["user"]["session"]["token"].getStr() == "[REDACTED]"
+  check extra["accounts"][0]["password"].getStr() == "[REDACTED]"
+  check extra["accounts"][1]["password"].getStr() == "[REDACTED]"
+
+test "pattern redactor scrubs nested string values":
+  setupTest()
+  configureLogging(cfg):
+    cfg.middleware.add newPatternRedactor(re2"\d{4}-\d{4}-\d{4}-\d{4}")
+  var logger = newLogger(name = "test")
+  logger.info("payment",
+    customer = %* {"card": "4111-1111-1111-1111"},
+    cards = %* ["4111-1111-1111-1111", "note"])
+  check captured.len == 1
+  let extra = parseJson(captured[0])["extra"]
+  check extra["customer"]["card"].getStr() == "[REDACTED]"
+  check extra["cards"][0].getStr() == "[REDACTED]"
+  check extra["cards"][1].getStr() == "note"
+
+test "built-in middleware tolerate a nil extra from earlier middleware":
+  # writeLog guarantees a non-nil extra, but any middleware in the chain
+  # may replace it with nil; the built-ins must not crash on that
+  setupTest()
+  configureLogging(cfg):
+    cfg.middleware.add proc(record: var LogRecord): bool =
+      record.extra = nil
+      true
+    cfg.middleware.add newRedactor(@["password"])
+    cfg.middleware.add newPatternRedactor(re2"\d+")
+    cfg.middleware.add newRateLimiter(window = 0.05, maxBurst = 1)
+  var logger = newLogger(name = "test")
+  # Single source line so all calls share one rate limiter key
+  for i in 0 ..< 4:
+    if i == 3:
+      sleep(100)
+    logger.info("value 123", password="x")
+  check captured.len == 2
+  # The pattern redactor still scrubbed the message
+  check parseJson(captured[0])["message"].getStr() == "value [REDACTED]"
+  # The rate limiter recreated extra to report the suppressed count
+  check parseJson(captured[1])["extra"]["suppressed"].getInt() == 2
 
 test "pattern redactor leaves non-matching values intact":
   setupTest()

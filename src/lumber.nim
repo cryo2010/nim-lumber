@@ -49,7 +49,7 @@ var middleware: seq[LogMiddleware] = @[]
 # middleware never sees nil; reused across records until one writes to it.
 # Guarded by writeLock.
 var scratchExtra = newJObject()
-var outputs*: seq[Output] = @[Output(stream: newFileStream(stdout))]
+var activeOutputs: seq[Output] = @[Output(stream: newFileStream(stdout))]
 var context* {.threadvar.}: JsonNode
 var writeLock: Lock
 var configLock: Lock
@@ -83,10 +83,10 @@ proc configureLoggingImpl(cb: proc(cfg: var LogConfig)) =
     defer: configOwner.store(0, moRelaxed)
     var cfg: LogConfig
     withLock writeLock:
-      cfg = LogConfig(middleware: middleware, outputs: outputs)
+      cfg = LogConfig(middleware: middleware, outputs: activeOutputs)
     cb(cfg)
     withLock writeLock:
-      for old in outputs:
+      for old in activeOutputs:
         var kept = false
         for o in cfg.outputs:
           if o.stream == old.stream:
@@ -98,7 +98,7 @@ proc configureLoggingImpl(cb: proc(cfg: var LogConfig)) =
           except CatchableError:
             discard
       middleware = cfg.middleware
-      outputs = cfg.outputs
+      activeOutputs = cfg.outputs
 
 template configureLogging*(cfg, body: untyped) =
   ## Reconfigure middleware and outputs atomically. `cfg` names the variable
@@ -125,23 +125,36 @@ template configureLogging*(cfg, body: untyped) =
 
 proc flushLogs*() =
   ## Flush all output streams. Call this before exiting to ensure
-  ## buffered log data is written.
-  for o in outputs:
-    try:
-      o.stream.flush()
-    except CatchableError:
-      discard
+  ## buffered log data is written. Safe to call while other threads log.
+  withLock writeLock:
+    for o in activeOutputs:
+      try:
+        o.stream.flush()
+      except CatchableError:
+        discard
+
+proc outputs*(): seq[Output] =
+  ## A snapshot of the currently configured outputs. To change them, use
+  ## `configureLogging`; mutating the returned seq has no effect. (In
+  ## earlier versions this was an exported var, which invited unlocked
+  ## mutation racing the logging threads.)
+  withLock writeLock:
+    result = activeOutputs
 
 proc shutdownLogs*() =
   ## Flush and close all output streams; async writer threads are joined
   ## and file handles released. Call on graceful exit. Logging after this
-  ## point is discarded by the closed streams.
-  for o in outputs:
-    try:
-      o.stream.flush()
-      o.stream.close()
-    except CatchableError:
-      discard
+  ## point is discarded by the closed streams. Safe to call while other
+  ## threads log: the write lock keeps closing from racing an in-flight
+  ## record (an unsynchronized close of an AsyncStream mid-write is a
+  ## use-after-free of its channel).
+  withLock writeLock:
+    for o in activeOutputs:
+      try:
+        o.stream.flush()
+        o.stream.close()
+      except CatchableError:
+        discard
 
 when defined(posix):
   import std/posix
@@ -156,7 +169,10 @@ proc shutdownLogsOnSignal*() =
   ## the automatic atexit flush. Applications with their own graceful
   ## shutdown should not use this (it overwrites the Ctrl-C hook and
   ## quits immediately); call `shutdownLogs` from their shutdown path
-  ## instead.
+  ## instead. Note that `shutdownLogs` takes the write lock: if the
+  ## signal lands on a thread that is inside a log call, the handler
+  ## deadlocks rather than corrupting stream state. Prefer a dedicated
+  ## shutdown path in threaded applications.
   setControlCHook(proc() {.noconv.} =
     shutdownLogs()
     quit(130)
@@ -228,44 +244,50 @@ proc writeLog*(logger: Logger, level: LogLevel, filename: string, line: int,
                message: string, fields: JsonNode = nil) =
   if level < logger.level:
     return
-  var extra: JsonNode
-  let hasContext = not context.isNil
-  let hasLoggerExtra = not logger.extra.isNil
-  let hasFields = not fields.isNil and fields.kind == JObject and fields.len > 0
-  # Merge order: context (lowest) → logger.extra → fields (highest)
-  # Fast path: no merging needed
-  if not hasContext and not hasFields:
-    if middleware.len > 0 and not logger.extra.isNil:
-      # Middleware mutates record.extra; give the record its own copy so
-      # the mutation can't leak into the logger's persistent extra.
-      extra = logger.extra.copy()
-    else:
-      extra = logger.extra  # nil or existing ref, no copy
-  elif not hasContext and not hasLoggerExtra:
-    extra = fields
-  else:
-    # Need to merge — copy the base and overlay
-    if hasContext:
-      extra = context.copy()
-    else:
-      extra = newJObject()
-    if hasLoggerExtra:
-      for key, val in logger.extra:
-        extra[key] = val
-    if hasFields:
-      for key, val in fields:
-        extra[key] = val
   let levelStr = $level
-  var record = LogRecord(
-    timestamp: formatTimestamp(),
-    level: levelStr,
-    name: logger.name,
-    filename: filename,
-    line: line,
-    message: message,
-    extra: extra
-  )
   withLock writeLock:
+    # Record assembly happens under the lock. Reading `middleware` outside
+    # it raced with configureLogging commits: deciding whether to copy
+    # logger.extra against a stale middleware seq could hand middleware the
+    # logger's persistent extra to mutate. Holding the lock here also
+    # serializes the refcount updates on logger.extra, so one module-level
+    # logger shared by many threads is safe under non-atomic ARC/ORC.
+    var extra: JsonNode
+    let hasContext = not context.isNil
+    let hasLoggerExtra = not logger.extra.isNil
+    let hasFields = not fields.isNil and fields.kind == JObject and fields.len > 0
+    # Merge order: context (lowest) -> logger.extra -> fields (highest)
+    # Fast path: no merging needed
+    if not hasContext and not hasFields:
+      if middleware.len > 0 and hasLoggerExtra:
+        # Middleware mutates record.extra; give the record its own copy so
+        # the mutation can't leak into the logger's persistent extra.
+        extra = logger.extra.copy()
+      else:
+        extra = logger.extra  # nil or existing ref, no copy
+    elif not hasContext and not hasLoggerExtra:
+      extra = fields
+    else:
+      # Need to merge: copy the base and overlay
+      if hasContext:
+        extra = context.copy()
+      else:
+        extra = newJObject()
+      if hasLoggerExtra:
+        for key, val in logger.extra:
+          extra[key] = val
+      if hasFields:
+        for key, val in fields:
+          extra[key] = val
+    var record = LogRecord(
+      timestamp: formatTimestamp(),
+      level: levelStr,
+      name: logger.name,
+      filename: filename,
+      line: line,
+      message: message,
+      extra: extra
+    )
     if middleware.len > 0:
       # Middleware always sees a JObject in record.extra so it can add
       # fields without nil checks. The scratch object is reused across
@@ -286,14 +308,18 @@ proc writeLog*(logger: Logger, level: LogLevel, filename: string, line: int,
           scratchExtra = newJObject()  # donated to this record
       if not keep:
         return
-    # Re-parse level only if middleware may have changed it
+    # Re-parse level only if middleware may have changed it; an unknown
+    # level string keeps the original level for output routing rather
+    # than raising out of the log call
     let outLevel = if record.level == levelStr: level
-                   else: parseEnum[LogLevel](record.level)
+                   else:
+                     try: parseEnum[LogLevel](record.level)
+                     except ValueError: level
     var buf = newStringOfCap(256)
     buf.add "{\"timestamp\":\""
-    buf.add record.timestamp
+    buf.escapeJsonStr(record.timestamp)
     buf.add "\",\"level\":\""
-    buf.add record.level
+    buf.escapeJsonStr(record.level)
     buf.add "\",\"name\":\""
     buf.escapeJsonStr(record.name)
     buf.add "\",\"filename\":\""
@@ -307,7 +333,7 @@ proc writeLog*(logger: Logger, level: LogLevel, filename: string, line: int,
       buf.add ",\"extra\":"
       buf.add $record.extra
     buf.add "}"
-    for o in outputs:
+    for o in activeOutputs:
       if outLevel < o.level:
         continue
       if o.names.len > 0 and record.name notin o.names:
@@ -334,19 +360,19 @@ proc exceptionToJson(e: ref Exception): JsonNode =
 
 proc addExceptionFields(fields: JsonNode, e: ref Exception) =
   ## Add exception fields. If multiple exceptions are logged, stores them as an array.
-  if fields.hasKey("errors"):
+  if fields.hasKey("errors") and fields["errors"].kind == JArray:
     fields["errors"].add(exceptionToJson(e))
   elif fields.hasKey("error"):
-    # Second exception — convert to array format
+    # A second exception, or a user-supplied field named "error": convert to
+    # array format, carrying over only the companion fields that exist (a
+    # plain error="..." kwarg has no errorType or stackTrace)
     let first = newJObject()
     first["error"] = fields["error"]
-    first["errorType"] = fields["errorType"]
-    if fields.hasKey("stackTrace"):
-      first["stackTrace"] = fields["stackTrace"]
     fields.delete("error")
-    fields.delete("errorType")
-    if fields.hasKey("stackTrace"):
-      fields.delete("stackTrace")
+    for key in ["errorType", "stackTrace"]:
+      if fields.hasKey(key):
+        first[key] = fields[key]
+        fields.delete(key)
     fields["errors"] = %[first, exceptionToJson(e)]
   else:
     let obj = exceptionToJson(e)
@@ -467,14 +493,22 @@ proc elapsedMs(start: MonoTime): float =
 
 template time*(logger: Logger, level: LogLevel, message: string, body: untyped) =
   ## Runs `body` and logs its wall-clock duration at `level` with a
-  ## `duration_ms` field.
-  let start = getMonoTime()
-  body
-  let durationMs = elapsedMs(start)
-  let fields = newJObject()
-  fields["duration_ms"] = %durationMs
-  let info = instantiationInfo()
-  writeLog(logger, level, info.filename, info.line, message, fields)
+  ## `duration_ms` field. Like the level macros, calls below the
+  ## compile-time `lumberLevel` threshold compile to just `body`; this
+  ## requires `level` to be a compile-time constant.
+  when level >= CompileLogLevel:
+    let start = getMonoTime()
+    body
+    let durationMs = elapsedMs(start)
+    let fields = newJObject()
+    fields["duration_ms"] = %durationMs
+    # Same project-relative form the level macros emit, so filename
+    # filtering treats both alike
+    const info = instantiationInfo(fullPaths = true)
+    const filename = relativePath(info.filename, getProjectPath())
+    writeLog(logger, level, filename, info.line, message, fields)
+  else:
+    body
 
 template time*(logger: Logger, message: string, body: untyped) =
   ## Runs `body` and logs its wall-clock duration at INFO level with a
