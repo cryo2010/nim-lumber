@@ -342,6 +342,29 @@ test "pattern redactor scrubs matching values":
   check strutils.find(msg, "[REDACTED]") >= 0
   check j["extra"]["cardNum"].getStr() == "[REDACTED]"
 
+test "built-in middleware tolerate a nil extra from earlier middleware":
+  # writeLog guarantees a non-nil extra, but any middleware in the chain
+  # may replace it with nil; the built-ins must not crash on that
+  setupTest()
+  configureLogging(cfg):
+    cfg.middleware.add proc(record: var LogRecord): bool =
+      record.extra = nil
+      true
+    cfg.middleware.add newRedactor(@["password"])
+    cfg.middleware.add newPatternRedactor(re2"\d+")
+    cfg.middleware.add newRateLimiter(window = 0.05, maxBurst = 1)
+  var logger = newLogger(name = "test")
+  # Single source line so all calls share one rate limiter key
+  for i in 0 ..< 4:
+    if i == 3:
+      sleep(100)
+    logger.info("value 123", password="x")
+  check captured.len == 2
+  # The pattern redactor still scrubbed the message
+  check parseJson(captured[0])["message"].getStr() == "value [REDACTED]"
+  # The rate limiter recreated extra to report the suppressed count
+  check parseJson(captured[1])["extra"]["suppressed"].getInt() == 2
+
 test "pattern redactor leaves non-matching values intact":
   setupTest()
   configureLogging(cfg):
