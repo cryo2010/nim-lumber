@@ -342,6 +342,36 @@ test "pattern redactor scrubs matching values":
   check strutils.find(msg, "[REDACTED]") >= 0
   check j["extra"]["cardNum"].getStr() == "[REDACTED]"
 
+test "redactor replaces keys inside nested objects and arrays":
+  setupTest()
+  configureLogging(cfg):
+    cfg.middleware.add newRedactor(@["password", "token"])
+  var logger = newLogger(name = "test")
+  logger.info("login",
+    user = %* {"name": "alice", "password": "secret", "session": {"token": "abc"}},
+    accounts = %* [{"password": "p1"}, {"password": "p2"}])
+  check captured.len == 1
+  let extra = parseJson(captured[0])["extra"]
+  check extra["user"]["name"].getStr() == "alice"
+  check extra["user"]["password"].getStr() == "[REDACTED]"
+  check extra["user"]["session"]["token"].getStr() == "[REDACTED]"
+  check extra["accounts"][0]["password"].getStr() == "[REDACTED]"
+  check extra["accounts"][1]["password"].getStr() == "[REDACTED]"
+
+test "pattern redactor scrubs nested string values":
+  setupTest()
+  configureLogging(cfg):
+    cfg.middleware.add newPatternRedactor(re2"\d{4}-\d{4}-\d{4}-\d{4}")
+  var logger = newLogger(name = "test")
+  logger.info("payment",
+    customer = %* {"card": "4111-1111-1111-1111"},
+    cards = %* ["4111-1111-1111-1111", "note"])
+  check captured.len == 1
+  let extra = parseJson(captured[0])["extra"]
+  check extra["customer"]["card"].getStr() == "[REDACTED]"
+  check extra["cards"][0].getStr() == "[REDACTED]"
+  check extra["cards"][1].getStr() == "note"
+
 test "built-in middleware tolerate a nil extra from earlier middleware":
   # writeLog guarantees a non-nil extra, but any middleware in the chain
   # may replace it with nil; the built-ins must not crash on that
