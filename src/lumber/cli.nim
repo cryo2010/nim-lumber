@@ -323,16 +323,20 @@ type
     value: string
     regex: Regex2
 
-  CliOptions = object
-    level: LogLevel
-    tz: string
-    filters: seq[Filter]
-    highlights: seq[Regex2]
-    pretty: bool
-    format: string
-    timeFormat: string
-    noColor: bool
-    configPath: string
+  CliOptions* = object
+    level*: LogLevel
+    levelSet*: bool  # --level was passed; distinguishes an explicit
+                     # default (--level trace) from "not passed" so it
+                     # can still override a config file value
+    tz*: string
+    tzSet*: bool     # same for --tz local
+    filters*: seq[Filter]
+    highlights*: seq[Regex2]
+    pretty*: bool
+    format*: string
+    timeFormat*: string
+    noColor*: bool
+    configPath*: string
 
 proc parseFilter*(expr: string): Filter =
   # Order matters — check longer operators first
@@ -483,11 +487,12 @@ proc getOptVal(p: var OptParser): string =
     else:
       return ""
 
-proc parseArgs(): CliOptions =
+proc parseArgs*(args: seq[string] = @[]): CliOptions =
+  ## Parses `args`; an empty seq reads the process command line.
   result = CliOptions(level: LogLevel.TRACE, tz: "local", filters: @[],
                       highlights: @[], pretty: false, format: "",
                       timeFormat: "", noColor: false, configPath: "")
-  var p = initOptParser()
+  var p = initOptParser(args)
   while true:
     p.next()
     case p.kind
@@ -510,6 +515,7 @@ proc parseArgs(): CliOptions =
           quit(1)
         try:
           result.level = parseEnum[LogLevel](val.toUpperAscii())
+          result.levelSet = true
         except ValueError:
           stderr.writeLine("lumber: invalid level '" & val & "'. Expected: trace, debug, info, warn, error, fatal")
           quit(1)
@@ -531,6 +537,7 @@ proc parseArgs(): CliOptions =
           stderr.writeLine("lumber: --tz requires a value")
           quit(1)
         result.tz = val
+        result.tzSet = true
       of "format":
         let val = getOptVal(p)
         if val.len == 0:
@@ -809,8 +816,8 @@ when isMainModule:
 
   # CLI overrides take precedence
   if opts.pretty: pretty = true
-  if opts.tz != "local": tz = opts.tz
-  if opts.level != LogLevel.TRACE: level = opts.level
+  if opts.tzSet: tz = opts.tz
+  if opts.levelSet: level = opts.level
   if opts.format.len > 0: fmt = opts.format
   if opts.timeFormat.len > 0: timeFmt = opts.timeFormat
   if opts.noColor or getEnv("NO_COLOR").len > 0 or getEnv("CI").len > 0:

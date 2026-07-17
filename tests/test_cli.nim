@@ -34,6 +34,21 @@ test "missing or unknown levels pass the level filter":
   check not passesLevel("INFO", LogLevel.WARN)
   check not passesLevel("trace", LogLevel.DEBUG)
 
+# -- Argument parsing --
+
+test "explicit flags are tracked so they can override config values":
+  # Regression: --tz local and --level trace were indistinguishable from
+  # "not passed", so a config file value silently won over them
+  let explicit = parseArgs(@["--tz", "local", "--level", "trace"])
+  check explicit.tzSet
+  check explicit.tz == "local"
+  check explicit.levelSet
+  check explicit.level == LogLevel.TRACE
+  let bare = parseArgs(@["--pretty"])
+  check not bare.tzSet
+  check not bare.levelSet
+  check bare.pretty
+
 test "parseTimestamp parses Z and offset timestamps":
   check parseTimestamp("2026-07-03T12:00:00Z") ==
         parseTimestamp("2026-07-03T05:00:00-07:00")
