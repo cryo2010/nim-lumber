@@ -111,6 +111,31 @@ test "positional arguments are appended and braces are never interpreted":
   check parseJson(captured[0])["message"].getStr() == "Values: 1 2 3"
   check parseJson(captured[1])["message"].getStr() == "literal {0} braces {} x"
 
+test "exception alongside a field named error does not crash":
+  # Regression: addExceptionFields assumed an existing "error" key always
+  # had a companion "errorType" and raised KeyError for plain kwargs
+  setupTest()
+  var logger = newLogger(name = "test")
+  let e = newException(ValueError, "boom")
+  logger.error("failed", error="disk full", cause=e)
+  check captured.len == 1
+  let errs = parseJson(captured[0])["extra"]["errors"]
+  check errs.kind == JArray
+  check errs.len == 2
+  check errs[0]["error"].getStr() == "disk full"
+  check errs[1]["error"].getStr() == "boom"
+  check errs[1]["errorType"].getStr() == "ValueError"
+
+test "two exceptions become an errors array":
+  setupTest()
+  var logger = newLogger(name = "test")
+  logger.error("failed", newException(ValueError, "first"), newException(IOError, "second"))
+  check captured.len == 1
+  let errs = parseJson(captured[0])["extra"]["errors"]
+  check errs.len == 2
+  check errs[0]["errorType"].getStr() == "ValueError"
+  check errs[1]["errorType"].getStr() == "IOError"
+
 test "time block measures wall time, not CPU time":
   setupTest()
   var logger = newLogger(name = "test")

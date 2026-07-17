@@ -334,19 +334,19 @@ proc exceptionToJson(e: ref Exception): JsonNode =
 
 proc addExceptionFields(fields: JsonNode, e: ref Exception) =
   ## Add exception fields. If multiple exceptions are logged, stores them as an array.
-  if fields.hasKey("errors"):
+  if fields.hasKey("errors") and fields["errors"].kind == JArray:
     fields["errors"].add(exceptionToJson(e))
   elif fields.hasKey("error"):
-    # Second exception — convert to array format
+    # A second exception, or a user-supplied field named "error": convert to
+    # array format, carrying over only the companion fields that exist (a
+    # plain error="..." kwarg has no errorType or stackTrace)
     let first = newJObject()
     first["error"] = fields["error"]
-    first["errorType"] = fields["errorType"]
-    if fields.hasKey("stackTrace"):
-      first["stackTrace"] = fields["stackTrace"]
     fields.delete("error")
-    fields.delete("errorType")
-    if fields.hasKey("stackTrace"):
-      fields.delete("stackTrace")
+    for key in ["errorType", "stackTrace"]:
+      if fields.hasKey(key):
+        first[key] = fields[key]
+        fields.delete(key)
     fields["errors"] = %[first, exceptionToJson(e)]
   else:
     let obj = exceptionToJson(e)
