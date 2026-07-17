@@ -306,10 +306,10 @@ Examples:
   myapp | lumber --tz PST"""
 
 type
-  FilterOp = enum
+  FilterOp* = enum
     opEq, opNeq, opGt, opGte, opLt, opLte, opRegex
 
-  Filter = object
+  Filter* = object
     key: string
     op: FilterOp
     value: string
@@ -326,7 +326,7 @@ type
     noColor: bool
     configPath: string
 
-proc parseFilter(expr: string): Filter =
+proc parseFilter*(expr: string): Filter =
   # Order matters — check longer operators first
   for (op, token) in [(opNeq, "!="), (opGte, ">="), (opLte, "<="),
                        (opGt, ">"), (opLt, "<"), (opRegex, "~"), (opEq, "=")]:
@@ -349,21 +349,25 @@ proc getField(j: JsonNode, key: string): JsonNode =
     if not extra.isNil and extra.kind == JObject:
       result = extra.getOrDefault(key)
 
-proc parseTimestamp(s: string): int64 =
+proc parseTimestamp*(s: string): int64 =
   ## Parses ISO 8601 timestamps to unix epoch. Supports Z, +HH:MM, -HH:MM offsets.
+  ## Raises ValueError for anything that is not an ISO 8601 timestamp.
   if s.endsWith("Z"):
     return s.parse("yyyy-MM-dd'T'HH:mm:ss'Z'", utc()).toTime().toUnix()
-  # Try with offset like 2026-07-03T15:27:17-07:00
-  let sign = if s[^6] == '+': 1 elif s[^6] == '-': -1 else: 0
-  if sign != 0 and s[^3] == ':':
-    let base = s[0 ..< ^6].parse("yyyy-MM-dd'T'HH:mm:ss", utc())
-    let hours = parseInt(s[^5 .. ^4])
-    let mins = parseInt(s[^2 .. ^1])
-    let offsetSecs = sign * (hours * 3600 + mins * 60)
-    return base.toTime().toUnix() - offsetSecs.int64
+  # Try with offset like 2026-07-03T15:27:17-07:00. Anything shorter than a
+  # full timestamp with offset cannot be indexed from the back (short values
+  # such as "500" from numeric filters must raise ValueError, not IndexDefect)
+  if s.len >= 25 and s[^3] == ':':
+    let sign = if s[^6] == '+': 1 elif s[^6] == '-': -1 else: 0
+    if sign != 0:
+      let base = s[0 ..< ^6].parse("yyyy-MM-dd'T'HH:mm:ss", utc())
+      let hours = parseInt(s[^5 .. ^4])
+      let mins = parseInt(s[^2 .. ^1])
+      let offsetSecs = sign * (hours * 3600 + mins * 60)
+      return base.toTime().toUnix() - offsetSecs.int64
   raise newException(ValueError, "unrecognized timestamp format")
 
-proc matchesFilter(j: JsonNode, f: Filter): bool =
+proc matchesFilter*(j: JsonNode, f: Filter): bool =
   let node = getField(j, f.key)
   if node.isNil or node.kind == JNull:
     return f.op == opNeq  # missing field only matches !=

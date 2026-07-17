@@ -23,7 +23,7 @@ requires "regex >= 0.25.0"
 
 task test, "Run the test suite (set LUMBER_TEST_MM to test another memory manager, e.g. atomicArc)":
   let mm = getEnv("LUMBER_TEST_MM", "orc")
-  for t in ["test_logger", "test_middleware", "test_threading", "test_streams"]:
+  for t in ["test_logger", "test_middleware", "test_threading", "test_streams", "test_cli"]:
     exec "nim c --mm:" & mm & " --hints:off --threads:on -r tests/" & t & ".nim"
 
 task setVersion, "Set the package version in lumber.nimble and src/lumber/version.nim (nimble setVersion X.Y.Z)":
