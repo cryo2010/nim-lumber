@@ -18,6 +18,11 @@ proc newRateLimiter*(window: float = 1.0, maxBurst: int = 5): LogMiddleware =
   ## from the same file:line are emitted. Resets after the window expires.
   ## When messages were suppressed, the next emitted message from that
   ## source includes a `suppressed` field with the count of dropped messages.
+  ##
+  ## Suppressed counts survive window resets so they can be reported on the
+  ## next emit; a source that stops logging entirely retains its last count
+  ## until then. Memory is bounded by the number of distinct file:line
+  ## sources, not by log volume.
   var counts = initTable[string, int]()
   var dropped = initTable[string, int]()
   var lastReset = epochTime()
