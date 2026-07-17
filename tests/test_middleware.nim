@@ -342,6 +342,19 @@ test "pattern redactor scrubs matching values":
   check strutils.find(msg, "[REDACTED]") >= 0
   check j["extra"]["cardNum"].getStr() == "[REDACTED]"
 
+test "middleware-modified level emits valid JSON and does not raise":
+  # Regression: an unknown level string raised ValueError out of the log
+  # call, and level/timestamp were serialized unescaped
+  setupTest()
+  configureLogging(cfg):
+    cfg.middleware.add proc(record: var LogRecord): bool =
+      record.level = "AUDIT \"quoted\""
+      true
+  var logger = newLogger(name = "test")
+  logger.info("custom level")
+  check captured.len == 1
+  check parseJson(captured[0])["level"].getStr() == "AUDIT \"quoted\""
+
 test "redactor replaces keys inside nested objects and arrays":
   setupTest()
   configureLogging(cfg):

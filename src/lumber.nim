@@ -308,14 +308,18 @@ proc writeLog*(logger: Logger, level: LogLevel, filename: string, line: int,
           scratchExtra = newJObject()  # donated to this record
       if not keep:
         return
-    # Re-parse level only if middleware may have changed it
+    # Re-parse level only if middleware may have changed it; an unknown
+    # level string keeps the original level for output routing rather
+    # than raising out of the log call
     let outLevel = if record.level == levelStr: level
-                   else: parseEnum[LogLevel](record.level)
+                   else:
+                     try: parseEnum[LogLevel](record.level)
+                     except ValueError: level
     var buf = newStringOfCap(256)
     buf.add "{\"timestamp\":\""
-    buf.add record.timestamp
+    buf.escapeJsonStr(record.timestamp)
     buf.add "\",\"level\":\""
-    buf.add record.level
+    buf.escapeJsonStr(record.level)
     buf.add "\",\"name\":\""
     buf.escapeJsonStr(record.name)
     buf.add "\",\"filename\":\""
