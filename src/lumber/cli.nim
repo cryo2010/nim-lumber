@@ -253,6 +253,14 @@ proc levelOrd(level: string): int =
   of "FATAL": 5
   else: -1
 
+proc passesLevel*(jLevel: string, minLevel: LogLevel): bool =
+  ## Whether a line with level `jLevel` passes the `--level` filter.
+  ## A missing or unrecognized level always passes: non-JSON lines are
+  ## echoed verbatim, so valid JSON without a known level must not be
+  ## silently dropped either.
+  let lo = levelOrd(jLevel)
+  lo < 0 or lo >= ord(minLevel)
+
 const Help = """
 lumber - JSON log prettifier
 
@@ -818,7 +826,7 @@ when isMainModule:
     try:
       let j = parseJson(line)
       let jLevel = j.getOrDefault("level").getStr("")
-      if levelOrd(jLevel) < ord(level):
+      if not passesLevel(jLevel, level):
         continue
       if opts.filters.len > 0 and not matchesAllFilters(j, opts.filters):
         continue

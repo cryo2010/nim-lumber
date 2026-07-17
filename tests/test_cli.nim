@@ -1,5 +1,6 @@
 import unittest
 import std/json
+import lumber
 import lumber/cli
 
 # -- Filters --
@@ -18,6 +19,20 @@ test "parseTimestamp rejects non-timestamp values with ValueError":
   for bad in ["500", "abc", "", "1", "12:00", "not-a-timestamp"]:
     expect ValueError:
       discard parseTimestamp(bad)
+
+# -- Level filtering --
+
+test "missing or unknown levels pass the level filter":
+  # Regression: JSON lines without a recognized level were silently
+  # dropped (levelOrd -1 compared below every threshold) while non-JSON
+  # lines were echoed verbatim
+  check passesLevel("", LogLevel.TRACE)
+  check passesLevel("", LogLevel.FATAL)
+  check passesLevel("NOTICE", LogLevel.WARN)
+  check passesLevel("WARN", LogLevel.WARN)
+  check passesLevel("error", LogLevel.WARN)
+  check not passesLevel("INFO", LogLevel.WARN)
+  check not passesLevel("trace", LogLevel.DEBUG)
 
 test "parseTimestamp parses Z and offset timestamps":
   check parseTimestamp("2026-07-03T12:00:00Z") ==
