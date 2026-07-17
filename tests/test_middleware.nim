@@ -145,6 +145,18 @@ test "time block measures wall time, not CPU time":
   let ms = parseJson(captured[0])["extra"]["duration_ms"].getFloat()
   check ms >= 25.0
 
+test "time template reports the same filename form as the level macros":
+  # Regression: time used the bare instantiationInfo filename while the
+  # macros emit project-relative paths, breaking filename filtering
+  setupTest()
+  var logger = newLogger(name = "test")
+  logger.info("from macro")
+  logger.time("from time"):
+    discard
+  check captured.len == 2
+  check parseJson(captured[0])["filename"].getStr() ==
+        parseJson(captured[1])["filename"].getStr()
+
 test "rate limiter allows burst then suppresses":
   setupTest()
   configureLogging(cfg):

@@ -467,14 +467,22 @@ proc elapsedMs(start: MonoTime): float =
 
 template time*(logger: Logger, level: LogLevel, message: string, body: untyped) =
   ## Runs `body` and logs its wall-clock duration at `level` with a
-  ## `duration_ms` field.
-  let start = getMonoTime()
-  body
-  let durationMs = elapsedMs(start)
-  let fields = newJObject()
-  fields["duration_ms"] = %durationMs
-  let info = instantiationInfo()
-  writeLog(logger, level, info.filename, info.line, message, fields)
+  ## `duration_ms` field. Like the level macros, calls below the
+  ## compile-time `lumberLevel` threshold compile to just `body`; this
+  ## requires `level` to be a compile-time constant.
+  when level >= CompileLogLevel:
+    let start = getMonoTime()
+    body
+    let durationMs = elapsedMs(start)
+    let fields = newJObject()
+    fields["duration_ms"] = %durationMs
+    # Same project-relative form the level macros emit, so filename
+    # filtering treats both alike
+    const info = instantiationInfo(fullPaths = true)
+    const filename = relativePath(info.filename, getProjectPath())
+    writeLog(logger, level, filename, info.line, message, fields)
+  else:
+    body
 
 template time*(logger: Logger, message: string, body: untyped) =
   ## Runs `body` and logs its wall-clock duration at INFO level with a
