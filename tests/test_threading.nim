@@ -43,3 +43,39 @@ test "concurrent logging: intact lines, per-thread order, context isolation":
     inc nextSeq[t]
   check lineCount == numThreads * messagesPerThread
   removeFile(logFile)
+
+# One module-level logger with a persistent extra, shared by all threads:
+# the README's idiomatic setup. Record assembly (including the refcount
+# traffic on logger.extra) happens under the write lock, so this is safe
+# under non-atomic ARC/ORC too.
+
+var sharedLogger = newLogger(name = "shared", extra = %* {"service": "api"})
+
+proc sharedWorker(id: int) {.thread.} =
+  {.cast(gcsafe).}:
+    for i in 0 ..< messagesPerThread:
+      sharedLogger.info(&"shared message {i}", seqNo=i, thread=id)
+
+test "one logger with extra fields shared across threads":
+  removeFile(logFile)
+  configureLogging(cfg):
+    cfg.outputs = @[Output(stream: newFileStream(logFile, fmWrite))]
+
+  var threads: array[numThreads, Thread[int]]
+  for i in 0 ..< numThreads:
+    createThread(threads[i], sharedWorker, i)
+  joinThreads(threads)
+  flushLogs()
+
+  var lineCount = 0
+  var nextSeq: array[numThreads, int]
+  for line in logFile.lines:
+    if line.len == 0: continue
+    let j = parseJson(line)
+    inc lineCount
+    check j["extra"]["service"].getStr() == "api"
+    let t = j["extra"]["thread"].getInt()
+    check j["extra"]["seqNo"].getInt() == nextSeq[t]
+    inc nextSeq[t]
+  check lineCount == numThreads * messagesPerThread
+  removeFile(logFile)

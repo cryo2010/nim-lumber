@@ -228,44 +228,50 @@ proc writeLog*(logger: Logger, level: LogLevel, filename: string, line: int,
                message: string, fields: JsonNode = nil) =
   if level < logger.level:
     return
-  var extra: JsonNode
-  let hasContext = not context.isNil
-  let hasLoggerExtra = not logger.extra.isNil
-  let hasFields = not fields.isNil and fields.kind == JObject and fields.len > 0
-  # Merge order: context (lowest) → logger.extra → fields (highest)
-  # Fast path: no merging needed
-  if not hasContext and not hasFields:
-    if middleware.len > 0 and not logger.extra.isNil:
-      # Middleware mutates record.extra; give the record its own copy so
-      # the mutation can't leak into the logger's persistent extra.
-      extra = logger.extra.copy()
-    else:
-      extra = logger.extra  # nil or existing ref, no copy
-  elif not hasContext and not hasLoggerExtra:
-    extra = fields
-  else:
-    # Need to merge — copy the base and overlay
-    if hasContext:
-      extra = context.copy()
-    else:
-      extra = newJObject()
-    if hasLoggerExtra:
-      for key, val in logger.extra:
-        extra[key] = val
-    if hasFields:
-      for key, val in fields:
-        extra[key] = val
   let levelStr = $level
-  var record = LogRecord(
-    timestamp: formatTimestamp(),
-    level: levelStr,
-    name: logger.name,
-    filename: filename,
-    line: line,
-    message: message,
-    extra: extra
-  )
   withLock writeLock:
+    # Record assembly happens under the lock. Reading `middleware` outside
+    # it raced with configureLogging commits: deciding whether to copy
+    # logger.extra against a stale middleware seq could hand middleware the
+    # logger's persistent extra to mutate. Holding the lock here also
+    # serializes the refcount updates on logger.extra, so one module-level
+    # logger shared by many threads is safe under non-atomic ARC/ORC.
+    var extra: JsonNode
+    let hasContext = not context.isNil
+    let hasLoggerExtra = not logger.extra.isNil
+    let hasFields = not fields.isNil and fields.kind == JObject and fields.len > 0
+    # Merge order: context (lowest) -> logger.extra -> fields (highest)
+    # Fast path: no merging needed
+    if not hasContext and not hasFields:
+      if middleware.len > 0 and hasLoggerExtra:
+        # Middleware mutates record.extra; give the record its own copy so
+        # the mutation can't leak into the logger's persistent extra.
+        extra = logger.extra.copy()
+      else:
+        extra = logger.extra  # nil or existing ref, no copy
+    elif not hasContext and not hasLoggerExtra:
+      extra = fields
+    else:
+      # Need to merge: copy the base and overlay
+      if hasContext:
+        extra = context.copy()
+      else:
+        extra = newJObject()
+      if hasLoggerExtra:
+        for key, val in logger.extra:
+          extra[key] = val
+      if hasFields:
+        for key, val in fields:
+          extra[key] = val
+    var record = LogRecord(
+      timestamp: formatTimestamp(),
+      level: levelStr,
+      name: logger.name,
+      filename: filename,
+      line: line,
+      message: message,
+      extra: extra
+    )
     if middleware.len > 0:
       # Middleware always sees a JObject in record.extra so it can add
       # fields without nil checks. The scratch object is reused across
