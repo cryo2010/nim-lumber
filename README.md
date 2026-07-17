@@ -641,9 +641,8 @@ configureLogging(cfg):
     Output(stream: newAsyncStream(newRollingFileStream("app.log"))),
   ]
 
-# Close to flush and join the writer thread
-for o in outputs:
-  o.stream.close()
+# Close to flush and join the writer threads
+shutdownLogs()
 ```
 
 ## CLI Prettifier
@@ -861,8 +860,7 @@ dbLogger.error("Failed to connect to database")
 
 logger.fatal("Shutting down")
 
-for o in outputs:
-  o.stream.close()
+shutdownLogs()
 ```
 
 ### Output (also written to `app.log`; ERROR and FATAL additionally go to `error.log`):

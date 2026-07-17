@@ -45,5 +45,4 @@ dbLogger.time("connection attempt"):
 dbLogger.error("Failed to connect to database")
 logger.fatal("Shutting down")
 
-for o in outputs:
-  o.stream.close()
+shutdownLogs()

@@ -65,7 +65,7 @@ test "reentrant configureLogging raises a Defect instead of deadlocking":
   # Configuration still works after the Defect
   configureLogging(cfg):
     cfg.outputs.add Output(stream: newCaptureStream())
-  check outputs.len == 2
+  check outputs().len == 2
 
 test "successive configureLogging calls compose":
   setupTest()
@@ -74,7 +74,7 @@ test "successive configureLogging calls compose":
   configureLogging(cfg):
     cfg.outputs.add Output(stream: newCaptureStream())
   # Each call started from the previous committed state
-  check outputs.len == 3
+  check outputs().len == 3
 
 test "records without fields carry no extra even with middleware":
   setupTest()

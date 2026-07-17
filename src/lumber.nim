@@ -49,7 +49,7 @@ var middleware: seq[LogMiddleware] = @[]
 # middleware never sees nil; reused across records until one writes to it.
 # Guarded by writeLock.
 var scratchExtra = newJObject()
-var outputs*: seq[Output] = @[Output(stream: newFileStream(stdout))]
+var activeOutputs: seq[Output] = @[Output(stream: newFileStream(stdout))]
 var context* {.threadvar.}: JsonNode
 var writeLock: Lock
 var configLock: Lock
@@ -83,10 +83,10 @@ proc configureLoggingImpl(cb: proc(cfg: var LogConfig)) =
     defer: configOwner.store(0, moRelaxed)
     var cfg: LogConfig
     withLock writeLock:
-      cfg = LogConfig(middleware: middleware, outputs: outputs)
+      cfg = LogConfig(middleware: middleware, outputs: activeOutputs)
     cb(cfg)
     withLock writeLock:
-      for old in outputs:
+      for old in activeOutputs:
         var kept = false
         for o in cfg.outputs:
           if o.stream == old.stream:
@@ -98,7 +98,7 @@ proc configureLoggingImpl(cb: proc(cfg: var LogConfig)) =
           except CatchableError:
             discard
       middleware = cfg.middleware
-      outputs = cfg.outputs
+      activeOutputs = cfg.outputs
 
 template configureLogging*(cfg, body: untyped) =
   ## Reconfigure middleware and outputs atomically. `cfg` names the variable
@@ -127,11 +127,19 @@ proc flushLogs*() =
   ## Flush all output streams. Call this before exiting to ensure
   ## buffered log data is written. Safe to call while other threads log.
   withLock writeLock:
-    for o in outputs:
+    for o in activeOutputs:
       try:
         o.stream.flush()
       except CatchableError:
         discard
+
+proc outputs*(): seq[Output] =
+  ## A snapshot of the currently configured outputs. To change them, use
+  ## `configureLogging`; mutating the returned seq has no effect. (In
+  ## earlier versions this was an exported var, which invited unlocked
+  ## mutation racing the logging threads.)
+  withLock writeLock:
+    result = activeOutputs
 
 proc shutdownLogs*() =
   ## Flush and close all output streams; async writer threads are joined
@@ -141,7 +149,7 @@ proc shutdownLogs*() =
   ## record (an unsynchronized close of an AsyncStream mid-write is a
   ## use-after-free of its channel).
   withLock writeLock:
-    for o in outputs:
+    for o in activeOutputs:
       try:
         o.stream.flush()
         o.stream.close()
@@ -321,7 +329,7 @@ proc writeLog*(logger: Logger, level: LogLevel, filename: string, line: int,
       buf.add ",\"extra\":"
       buf.add $record.extra
     buf.add "}"
-    for o in outputs:
+    for o in activeOutputs:
       if outLevel < o.level:
         continue
       if o.names.len > 0 and record.name notin o.names:
