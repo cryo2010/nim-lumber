@@ -1,8 +1,8 @@
-## Traffic generator for demos/webserver.nim: requests /api/user once per
+## Traffic generator for examples/webserver.nim: requests /api/user once per
 ## second so the server demo has something to log. No lumber usage here.
 ##
 ## Run (in a second terminal, with the webserver demo running):
-##   nim r demos/webclient.nim
+##   nim r examples/webclient.nim
 
 import std/[asyncdispatch, httpclient]
 
