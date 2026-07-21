@@ -28,6 +28,20 @@ task test, "Run the test suite (set LUMBER_TEST_MM to test another memory manage
   # Compile-time elimination needs its own binary with a raised threshold
   exec "nim c --mm:" & mm & " --hints:off --threads:on -d:lumberLevel=ERROR -r tests/test_compile_gate.nim"
 
+task testValgrind, "Run the test suite under valgrind (Linux; set LUMBER_TEST_MM as with test)":
+  ## -d:useMalloc routes Nim's allocator through malloc/free so valgrind
+  ## sees every allocation; without it, leaks and invalid accesses hide
+  ## inside Nim's own memory pools.
+  let mm = getEnv("LUMBER_TEST_MM", "orc")
+  let compile = "nim c --mm:" & mm & " -d:useMalloc --debugger:native --hints:off --threads:on "
+  const vg = "valgrind --quiet --error-exitcode=1 --leak-check=full " &
+             "--show-leak-kinds=definite --errors-for-leak-kinds=definite "
+  for t in ["test_logger", "test_middleware", "test_threading", "test_streams", "test_cli"]:
+    exec compile & "tests/" & t & ".nim"
+    exec vg & "tests/" & t
+  exec compile & "-d:lumberLevel=ERROR tests/test_compile_gate.nim"
+  exec vg & "tests/test_compile_gate"
+
 task setVersion, "Set the package version in lumber.nimble and src/lumber/version.nim (nimble setVersion X.Y.Z)":
   proc replaceLine(path, prefix, newLine: string) =
     var lines = readFile(path).splitLines

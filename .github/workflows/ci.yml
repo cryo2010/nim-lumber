@@ -24,6 +24,14 @@ jobs:
         env:
           LUMBER_TEST_MM: ${{ matrix.mm }}
 
+      - name: Install valgrind
+        run: sudo apt-get update && sudo apt-get install -y valgrind
+
+      - name: Run tests under valgrind (--mm:${{ matrix.mm }})
+        run: nimble testValgrind -y
+        env:
+          LUMBER_TEST_MM: ${{ matrix.mm }}
+
       - name: Build CLI
         if: matrix.mm == 'orc'
         run: nimble buildProd -y
