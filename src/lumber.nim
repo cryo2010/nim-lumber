@@ -49,7 +49,17 @@ var middleware: seq[LogMiddleware] = @[]
 # middleware never sees nil; reused across records until one writes to it.
 # Guarded by writeLock.
 var scratchExtra = newJObject()
-var activeOutputs: seq[Output] = @[Output(stream: newFileStream(stdout))]
+
+# The outputs live behind a manually allocated pointer, not in a plain
+# global: the atexit flush registered below runs after ARC has destroyed
+# module globals, so a global seq would be freed by then and flushing it
+# is a use-after-free (valgrind catches this). The holder is deliberately
+# never freed; the OS reclaims it at process end.
+type OutputsHolder = object
+  outputs: seq[Output]
+var outputsHolder = createShared(OutputsHolder)
+template activeOutputs: seq[Output] = outputsHolder.outputs
+activeOutputs = @[Output(stream: newFileStream(stdout))]
 var context* {.threadvar.}: JsonNode
 var writeLock: Lock
 var configLock: Lock
