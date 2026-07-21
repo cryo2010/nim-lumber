@@ -3,8 +3,8 @@
 ## inside the handler is tagged automatically. Async handlers all run on
 ## one thread, so this composes with thread-local context.
 ##
-## Run (then generate traffic with demos/webclient.nim or curl):
-##   nim r demos/webserver.nim | ./lumber --pretty
+## Run (then generate traffic with examples/webclient.nim or curl):
+##   nim r examples/webserver.nim | ./lumber --pretty
 ##   curl http://localhost:8080/api/user
 
 import std/[asynchttpserver, asyncdispatch, json, random, strutils, strformat]

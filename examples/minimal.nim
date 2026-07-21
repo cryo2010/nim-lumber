@@ -2,8 +2,8 @@
 ## automatic exception logging.
 ##
 ## Run (build the CLI first with `nimble buildProd` for the pretty version):
-##   nim r demos/minimal.nim
-##   nim r demos/minimal.nim | ./lumber --pretty
+##   nim r examples/minimal.nim
+##   nim r examples/minimal.nim | ./lumber --pretty
 
 import std/strformat
 import ../src/lumber

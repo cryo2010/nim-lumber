@@ -5,7 +5,7 @@
 ## current directory.
 ##
 ## Run:
-##   nim r demos/threads.nim
+##   nim r examples/threads.nim
 
 import std/[os, streams, json, strformat]
 import ../src/lumber

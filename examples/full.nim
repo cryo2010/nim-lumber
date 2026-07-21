@@ -5,7 +5,7 @@
 ## directory.
 ##
 ## Run:
-##   nim r demos/full.nim | ./lumber --pretty
+##   nim r examples/full.nim | ./lumber --pretty
 
 import std/strformat
 import ../src/lumber

@@ -3,7 +3,7 @@
 ## what was dropped.
 ##
 ## Run:
-##   nim r demos/ratelimit.nim | ./lumber --pretty
+##   nim r examples/ratelimit.nim | ./lumber --pretty
 
 import std/[os, strformat]
 import ../src/lumber
