@@ -19,6 +19,10 @@ proc worker(id: int) {.thread.} =
     withLogContext(%* {"ctxThread": id}):
       for i in 0 ..< messagesPerThread:
         logger.info(&"message {i} from thread {id}", seqNo=i, thread=id)
+    # ORC accumulates per-thread cycle-candidate state that thread exit
+    # does not free; collect before exiting so the valgrind CI check
+    # stays leak-clean (no-op under arc/atomicArc)
+    GC_fullCollect()
 
 test "concurrent logging: intact lines, per-thread order, context isolation":
   removeFile(logFile)
@@ -84,6 +88,7 @@ proc sharedWorker(id: int) {.thread.} =
   {.cast(gcsafe).}:
     for i in 0 ..< messagesPerThread:
       sharedLogger.info(&"shared message {i}", seqNo=i, thread=id)
+    GC_fullCollect()  # see worker
 
 test "one logger with extra fields shared across threads":
   removeFile(logFile)
