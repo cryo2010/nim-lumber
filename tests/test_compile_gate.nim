@@ -32,7 +32,7 @@ proc newCaptureStream(): CaptureStream =
 
 configureLogging(cfg):
   cfg.middleware = @[]
-  cfg.outputs = @[Output(stream: newCaptureStream())]
+  cfg.outputs = @[LogOutput(stream: newCaptureStream())]
 
 test "level macros below the threshold emit nothing":
   captured.setLen(0)

@@ -27,7 +27,7 @@ proc worker(id: int) {.thread.} =
 test "concurrent logging: intact lines, per-thread order, context isolation":
   removeFile(logFile)
   configureLogging(cfg):
-    cfg.outputs = @[Output(stream: newFileStream(logFile, fmWrite))]
+    cfg.outputs = @[LogOutput(stream: newFileStream(logFile, fmWrite))]
 
   var threads: array[numThreads, Thread[int]]
   for i in 0 ..< numThreads:
@@ -58,7 +58,7 @@ test "flushLogs is safe while other threads log":
   # lock, racing configureLogging commits and in-flight writes
   removeFile(logFile)
   configureLogging(cfg):
-    cfg.outputs = @[Output(stream: newFileStream(logFile, fmWrite))]
+    cfg.outputs = @[LogOutput(stream: newFileStream(logFile, fmWrite))]
 
   var threads: array[numThreads, Thread[int]]
   for i in 0 ..< numThreads:
@@ -93,7 +93,7 @@ proc sharedWorker(id: int) {.thread.} =
 test "one logger with extra fields shared across threads":
   removeFile(logFile)
   configureLogging(cfg):
-    cfg.outputs = @[Output(stream: newFileStream(logFile, fmWrite))]
+    cfg.outputs = @[LogOutput(stream: newFileStream(logFile, fmWrite))]
 
   var threads: array[numThreads, Thread[int]]
   for i in 0 ..< numThreads:

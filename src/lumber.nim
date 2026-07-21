@@ -35,14 +35,14 @@ type
 
   LogMiddleware* = proc(record: var LogRecord): bool
 
-  Output* = object
+  LogOutput* = object
     stream*: Stream
     level*: LogLevel = LogLevel.TRACE
     names*: seq[string] = @[]
 
   LogConfig* = object
     middleware*: seq[LogMiddleware]
-    outputs*: seq[Output]
+    outputs*: seq[LogOutput]
 
 var middleware: seq[LogMiddleware] = @[]
 # Empty JObject handed to middleware when a record has no extra, so
@@ -56,10 +56,10 @@ var scratchExtra = newJObject()
 # is a use-after-free (valgrind catches this). The holder is deliberately
 # never freed; the OS reclaims it at process end.
 type OutputsHolder = object
-  outputs: seq[Output]
+  outputs: seq[LogOutput]
 var outputsHolder = createShared(OutputsHolder)
-template activeOutputs: seq[Output] = outputsHolder.outputs
-activeOutputs = @[Output(stream: newFileStream(stdout))]
+template activeOutputs: seq[LogOutput] = outputsHolder.outputs
+activeOutputs = @[LogOutput(stream: newFileStream(stdout))]
 var context* {.threadvar.}: JsonNode
 var writeLock: Lock
 var configLock: Lock
@@ -129,7 +129,7 @@ template configureLogging*(cfg, body: untyped) =
   ##
   ## ```nim
   ## configureLogging(cfg):
-  ##   cfg.outputs.add Output(stream: newRollingFileStream("app.log"))
+  ##   cfg.outputs.add LogOutput(stream: newRollingFileStream("app.log"))
   ## ```
   configureLoggingImpl(proc(cfg: var LogConfig) = body)
 
@@ -143,7 +143,7 @@ proc flushLogs*() =
       except CatchableError:
         discard
 
-proc outputs*(): seq[Output] =
+proc outputs*(): seq[LogOutput] =
   ## A snapshot of the currently configured outputs. To change them, use
   ## `configureLogging`; mutating the returned seq has no effect. (In
   ## earlier versions this was an exported var, which invited unlocked

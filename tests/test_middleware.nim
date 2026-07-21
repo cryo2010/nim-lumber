@@ -29,12 +29,12 @@ template setupTest() =
   captured.setLen(0)
   configureLogging(cfg):
     cfg.middleware = @[]
-    cfg.outputs = @[Output(stream: newCaptureStream())]
+    cfg.outputs = @[LogOutput(stream: newCaptureStream())]
 
 test "configureLogging commits middleware and outputs atomically":
   captured.setLen(0)
   configureLogging(cfg):
-    cfg.outputs = @[Output(stream: newCaptureStream())]
+    cfg.outputs = @[LogOutput(stream: newCaptureStream())]
     cfg.middleware = @[]
     cfg.middleware.add proc(record: var LogRecord): bool =
       record.extra["configured"] = %true
@@ -64,15 +64,15 @@ test "reentrant configureLogging raises a Defect instead of deadlocking":
         discard inner
   # Configuration still works after the Defect
   configureLogging(cfg):
-    cfg.outputs.add Output(stream: newCaptureStream())
+    cfg.outputs.add LogOutput(stream: newCaptureStream())
   check outputs().len == 2
 
 test "successive configureLogging calls compose":
   setupTest()
   configureLogging(cfg):
-    cfg.outputs.add Output(stream: newCaptureStream())
+    cfg.outputs.add LogOutput(stream: newCaptureStream())
   configureLogging(cfg):
-    cfg.outputs.add Output(stream: newCaptureStream())
+    cfg.outputs.add LogOutput(stream: newCaptureStream())
   # Each call started from the previous committed state
   check outputs().len == 3
 
