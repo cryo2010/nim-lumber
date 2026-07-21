@@ -49,7 +49,17 @@ var middleware: seq[LogMiddleware] = @[]
 # middleware never sees nil; reused across records until one writes to it.
 # Guarded by writeLock.
 var scratchExtra = newJObject()
-var activeOutputs: seq[Output] = @[Output(stream: newFileStream(stdout))]
+
+# The outputs live behind a manually allocated pointer, not in a plain
+# global: the atexit flush registered below runs after ARC has destroyed
+# module globals, so a global seq would be freed by then and flushing it
+# is a use-after-free (valgrind catches this). The holder is deliberately
+# never freed; the OS reclaims it at process end.
+type OutputsHolder = object
+  outputs: seq[Output]
+var outputsHolder = createShared(OutputsHolder)
+template activeOutputs: seq[Output] = outputsHolder.outputs
+activeOutputs = @[Output(stream: newFileStream(stdout))]
 var context* {.threadvar.}: JsonNode
 var writeLock: Lock
 var configLock: Lock
@@ -206,7 +216,45 @@ proc toLogStr[T: not object](val: T): string =
   $val
 
 var cachedSecond {.threadvar.}: int64
-var cachedTimestamp {.threadvar.}: string
+# Fixed-size, heap-free cache: threadvars are not destroyed on thread
+# exit, so a string here would leak its payload once per thread
+var cachedTimestamp {.threadvar.}: array[len("yyyy-MM-ddTHH:mm:ss"), char]
+
+proc utcTimestamp*(unixSec: int64): string =
+  ## Renders a unix timestamp as "yyyy-MM-ddTHH:mm:ss" (UTC) using plain
+  ## integer math (Howard Hinnant's civil-from-days). Used for the log
+  ## timestamp instead of std/times DateTime formatting, which allocates
+  ## and caches a Timezone in a threadvar that thread exit never frees.
+  var days = unixSec div 86400
+  var rem = unixSec mod 86400
+  if rem < 0:
+    rem += 86400
+    days -= 1
+  let z = days + 719468
+  let era = (if z >= 0: z else: z - 146096) div 146097
+  let doe = z - era * 146097
+  let yoe = (doe - doe div 1460 + doe div 36524 - doe div 146096) div 365
+  let doy = doe - (365 * yoe + yoe div 4 - yoe div 100)
+  let mp = (5 * doy + 2) div 153
+  let d = doy - (153 * mp + 2) div 5 + 1
+  let m = mp + (if mp < 10: 3 else: -9)
+  let y = yoe + era * 400 + (if m <= 2: 1 else: 0)
+  result = newString(19)
+  template put2(idx: int, v: int64) =
+    result[idx] = chr(ord('0') + int(v div 10 mod 10))
+    result[idx + 1] = chr(ord('0') + int(v mod 10))
+  put2(0, y div 100)
+  put2(2, y)
+  result[4] = '-'
+  put2(5, m)
+  result[7] = '-'
+  put2(8, d)
+  result[10] = 'T'
+  put2(11, rem div 3600)
+  result[13] = ':'
+  put2(14, rem mod 3600 div 60)
+  result[16] = ':'
+  put2(17, rem mod 60)
 
 proc formatTimestamp(): string =
   let t = getTime()
@@ -214,9 +262,12 @@ proc formatTimestamp(): string =
   let ms = t.nanosecond div 1_000_000
   if sec != cachedSecond:
     cachedSecond = sec
-    cachedTimestamp = t.utc.format("yyyy-MM-dd'T'HH:mm:ss")
+    let formatted = utcTimestamp(sec)
+    for i in 0 ..< cachedTimestamp.len:
+      cachedTimestamp[i] = formatted[i]
   result = newStringOfCap(24)
-  result.add cachedTimestamp
+  for c in cachedTimestamp:
+    result.add c
   result.add '.'
   if ms < 10: result.add "00"
   elif ms < 100: result.add '0'

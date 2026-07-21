@@ -318,6 +318,9 @@ proc asyncClose(s: Stream) {.nimcall.} =
     a.state.chan.send(AsyncMsg(isClose: true))
     joinThread(a.thread)
     a.state.chan.close()
+    # deallocShared does not run destructors: release the inner ref
+    # explicitly or it leaks
+    a.state.inner = nil
     deallocShared(a.state)
 
 proc newAsyncStream*(inner: Stream): AsyncStream =
