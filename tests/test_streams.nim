@@ -155,11 +155,11 @@ test "buffered output flushes immediately at flushLevel and above":
                               maxSize = 65536, flushIntervalMs = 0)
   configureLogging(cfg):
     cfg.middleware = @[]
-    cfg.outputs = @[Output(stream: buf)]
+    cfg.outputs = @[LogOutput(stream: buf)]
   defer:
     # Restore the global config even if a check above raised
     configureLogging(cfg):
-      cfg.outputs = @[Output(stream: newFileStream(stdout))]
+      cfg.outputs = @[LogOutput(stream: newFileStream(stdout))]
   var logger = newLogger(name = "test")
   logger.info("buffered info")
   check getFileSize(path) == 0  # INFO is below the default ERROR threshold
@@ -181,12 +181,12 @@ test "async stream flushes when its queue drains, without close":
   defer: async.close()
   configureLogging(cfg):
     cfg.middleware = @[]
-    cfg.outputs = @[Output(stream: async)]
+    cfg.outputs = @[LogOutput(stream: async)]
   defer:
     # Restore the global config even if a check above raised; runs before
     # the close and removal defers (LIFO), so nothing logs to a closed stream
     configureLogging(cfg):
-      cfg.outputs = @[Output(stream: newFileStream(stdout))]
+      cfg.outputs = @[LogOutput(stream: newFileStream(stdout))]
   var logger = newLogger(name = "test")
   for i in 0 ..< 100:
     logger.info(&"message {i}")

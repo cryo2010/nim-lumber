@@ -17,7 +17,7 @@ const
 
 removeFile(logFile)
 configureLogging(cfg):
-  cfg.outputs = @[Output(stream: newFileStream(logFile, fmWrite))]
+  cfg.outputs = @[LogOutput(stream: newFileStream(logFile, fmWrite))]
 
 proc worker(id: int) {.thread.} =
   {.cast(gcsafe).}:

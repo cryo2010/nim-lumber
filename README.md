@@ -557,20 +557,20 @@ import std/streams
 configureLogging(cfg):
   cfg.outputs = @[
     # Console: all levels, all loggers
-    Output(stream: newFileStream(stdout)),
+    LogOutput(stream: newFileStream(stdout)),
 
     # File: only ERROR and above
-    Output(stream: newFileStream("error.log", fmAppend), level: LogLevel.ERROR),
+    LogOutput(stream: newFileStream("error.log", fmAppend), level: LogLevel.ERROR),
 
     # File: only logs from the "db" logger
-    Output(stream: newFileStream("db.log", fmAppend), names: @["db"]),
+    LogOutput(stream: newFileStream("db.log", fmAppend), names: @["db"]),
   ]
 ```
 
-The `Output` type:
+The `LogOutput` type:
 
 ```nim
-type Output* = object
+type LogOutput* = object
   stream*: Stream
   level*: LogLevel = LogLevel.TRACE  # default: accept all levels
   names*: seq[string] = @[]             # default: accept all logger names
@@ -584,10 +584,10 @@ Rotates when the file exceeds a size limit. Keeps numbered backups (`app.log.1`,
 
 ```nim
 # 10MB max, keep 5 backup files (default)
-Output(stream: newRollingFileStream("app.log"))
+LogOutput(stream: newRollingFileStream("app.log"))
 
 # Custom: 50MB max, keep 10 backups
-Output(stream: newRollingFileStream("app.log", maxBytes = 50_000_000, maxFiles = 10))
+LogOutput(stream: newRollingFileStream("app.log", maxBytes = 50_000_000, maxFiles = 10))
 ```
 
 #### Time-based rotation
@@ -596,10 +596,10 @@ Rotates at midnight UTC. Keeps dated backups (`app.2026-07-02.log`, `app.2026-07
 
 ```nim
 # Keep 30 days of logs (default)
-Output(stream: newDailyFileStream("app.log"))
+LogOutput(stream: newDailyFileStream("app.log"))
 
 # Keep 7 days
-Output(stream: newDailyFileStream("app.log", maxFiles = 7))
+LogOutput(stream: newDailyFileStream("app.log", maxFiles = 7))
 ```
 
 ### Buffered Streams
@@ -613,10 +613,10 @@ Wrap any stream with `newBufferedStream` for high-throughput logging. Uses a hyb
 
 ```nim
 # Default settings (4KB buffer, flush every 1s or on ERROR+)
-Output(stream: newBufferedStream(newFileStream(stdout)))
+LogOutput(stream: newBufferedStream(newFileStream(stdout)))
 
 # Custom: 8KB buffer, flush every 500ms, immediate flush on WARN+
-Output(stream: newBufferedStream(
+LogOutput(stream: newBufferedStream(
   newFileStream("app.log", fmAppend),
   maxSize = 8192,
   flushIntervalMs = 500,
@@ -624,7 +624,7 @@ Output(stream: newBufferedStream(
 ))
 
 # Combine with rotating files
-Output(stream: newBufferedStream(newRollingFileStream("app.log")))
+LogOutput(stream: newBufferedStream(newRollingFileStream("app.log")))
 ```
 
 In benchmarks, buffered streams are ~1.5-2.3x faster than unbuffered, with the gap widening with more outputs.
@@ -637,10 +637,10 @@ Wrap any stream with `newAsyncStream` for non-blocking I/O. Log calls push data 
 configureLogging(cfg):
   cfg.outputs = @[
     # Async console output
-    Output(stream: newAsyncStream(newFileStream(stdout))),
+    LogOutput(stream: newAsyncStream(newFileStream(stdout))),
 
     # Async rotating file
-    Output(stream: newAsyncStream(newRollingFileStream("app.log"))),
+    LogOutput(stream: newAsyncStream(newRollingFileStream("app.log"))),
   ]
 
 # Close to flush and join the writer threads
@@ -836,9 +836,9 @@ type
 # plus request context via middleware
 configureLogging(cfg):
   cfg.outputs = @[
-    Output(stream: newAsyncStream(newFileStream(stdout))),
-    Output(stream: newRollingFileStream("app.log", maxBytes = 1_000_000, maxFiles = 3)),
-    Output(stream: newFileStream("error.log", fmAppend), level: LogLevel.ERROR),
+    LogOutput(stream: newAsyncStream(newFileStream(stdout))),
+    LogOutput(stream: newRollingFileStream("app.log", maxBytes = 1_000_000, maxFiles = 3)),
+    LogOutput(stream: newFileStream("error.log", fmAppend), level: LogLevel.ERROR),
   ]
   cfg.middleware.add proc(record: var LogRecord): bool =
     record.extra["env"] = %"production"

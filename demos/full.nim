@@ -18,9 +18,9 @@ type
 
 configureLogging(cfg):
   cfg.outputs = @[
-    Output(stream: newAsyncStream(newFileStream(stdout))),
-    Output(stream: newRollingFileStream("demo.log", maxBytes = 1_000_000, maxFiles = 3)),
-    Output(stream: newFileStream("error.log", fmAppend), level: LogLevel.ERROR),
+    LogOutput(stream: newAsyncStream(newFileStream(stdout))),
+    LogOutput(stream: newRollingFileStream("demo.log", maxBytes = 1_000_000, maxFiles = 3)),
+    LogOutput(stream: newFileStream("error.log", fmAppend), level: LogLevel.ERROR),
   ]
 var logger = newLogger(extra = %* {"service": "demo-api"})
 var admin = User(name: "Admin", age: 35)
