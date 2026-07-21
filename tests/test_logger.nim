@@ -1,5 +1,5 @@
 import unittest
-import std/[json, os, strutils]
+import std/[json, os, strutils, times]
 import lumber
 
 test "nimble version matches LumberVersion":
@@ -14,6 +14,24 @@ test "nimble version matches LumberVersion":
       nimbleVersion = l.split('"')[1]
       break
   check nimbleVersion == LumberVersion
+
+test "utcTimestamp matches std/times rendering":
+  # The log timestamp uses hand-rolled civil-from-days math (std/times
+  # DateTime formatting leaks a threadvar Timezone per thread); pin it
+  # to std/times across edge dates
+  var epochs = @[
+    0'i64,                # 1970-01-01T00:00:00
+    86399,                # 1970-01-01T23:59:59
+    951782400,            # 2000-02-29 leap day in a leap century
+    1099180799,           # 2004-10-31 (leap year, month lengths)
+    2147483647,           # 2038-01-19 32-bit rollover
+    4107542399'i64,       # 2100-02-28T23:59:59, 2100 is not a leap year
+  ]
+  for step in 0 ..< 500:
+    epochs.add int64(step) * 7_776_001 + 1  # ~90 day stride across decades
+  for epoch in epochs:
+    check utcTimestamp(epoch) ==
+          epoch.fromUnix.utc.format("yyyy-MM-dd'T'HH:mm:ss")
 
 type
   User = object
