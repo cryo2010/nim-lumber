@@ -5,7 +5,7 @@ import std/strutils
 # Nimble requires a string literal here. Keep in sync with
 # src/lumber/version.nim: run `nimble setVersion X.Y.Z` to update both;
 # the test suite fails on drift.
-version       = "0.1.0"
+version       = "0.4.0"
 author        = "Craig Younker"
 description   = "A JSON logger and prettifier CLI"
 license       = "MIT"

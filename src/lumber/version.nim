@@ -3,4 +3,4 @@
 ## string literal, so lumber.nimble duplicates this value; the test suite
 ## asserts they match.
 
-const LumberVersion* = "0.1.0"
+const LumberVersion* = "0.4.0"
