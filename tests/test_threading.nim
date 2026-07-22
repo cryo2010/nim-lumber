@@ -113,3 +113,41 @@ test "one logger with extra fields shared across threads":
     inc nextSeq[t]
   check lineCount == numThreads * messagesPerThread
   removeFile(logFile)
+
+# Daily rotation writes run on whichever thread happens to log, so the
+# rotation date check must not leak per thread (regression: dateSuffix
+# used std/times utc(), which caches a Timezone in a threadvar that
+# thread exit never frees; the valgrind CI task catches it here)
+
+let dailyLog = getTempDir() / "lumber_test_threading_daily.log"
+
+proc dailyWorker(id: int) {.thread.} =
+  {.cast(gcsafe).}:
+    var logger = newLogger(name = "daily")
+    for i in 0 ..< 100:
+      logger.info(&"daily message {i}", thread=id)
+    GC_fullCollect()  # see worker
+
+test "daily rotation output logged from threads":
+  removeFile(dailyLog)
+  let daily = newDailyFileStream(dailyLog)
+  defer: daily.close()  # runs after the restore below (LIFO)
+  configureLogging(cfg):
+    cfg.outputs = @[LogOutput(stream: daily)]
+  defer:
+    configureLogging(cfg):
+      cfg.outputs = @[LogOutput(stream: newFileStream(stdout))]
+
+  var threads: array[numThreads, Thread[int]]
+  for i in 0 ..< numThreads:
+    createThread(threads[i], dailyWorker, i)
+  joinThreads(threads)
+  flushLogs()
+
+  var lineCount = 0
+  for line in dailyLog.lines:
+    if line.len == 0: continue
+    discard parseJson(line)
+    inc lineCount
+  check lineCount == numThreads * 100
+  removeFile(dailyLog)

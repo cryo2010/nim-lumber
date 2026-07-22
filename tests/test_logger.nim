@@ -15,7 +15,7 @@ test "nimble version matches LumberVersion":
       break
   check nimbleVersion == LumberVersion
 
-test "utcTimestamp matches std/times rendering":
+test "utcTimestamp and utcDate match std/times rendering":
   # The log timestamp uses hand-rolled civil-from-days math (std/times
   # DateTime formatting leaks a threadvar Timezone per thread); pin it
   # to std/times across edge dates
@@ -32,6 +32,7 @@ test "utcTimestamp matches std/times rendering":
   for epoch in epochs:
     check utcTimestamp(epoch) ==
           epoch.fromUnix.utc.format("yyyy-MM-dd'T'HH:mm:ss")
+    check utcDate(epoch) == epoch.fromUnix.utc.format("yyyy-MM-dd")
 
 type
   User = object

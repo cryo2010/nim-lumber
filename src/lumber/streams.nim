@@ -5,6 +5,7 @@
 
 import std/[streams, times, os, strutils, algorithm, atomics]
 import ./types
+import ./timestamps
 
 # -- Rotating file streams --
 
@@ -96,7 +97,10 @@ proc newRollingFileStream*(path: string, maxBytes: int64 = 10_000_000,
   result.flushImpl = sizeRotateFlush
 
 proc dateSuffix(): string =
-  now().utc.format("yyyy-MM-dd")
+  # Civil-from-days math instead of now().utc: rotation runs on whichever
+  # thread happens to log, and std/times utc() leaks a threadvar Timezone
+  # per thread (see timestamps.nim)
+  utcDate(getTime().toUnix())
 
 proc timeRotateClose(s: Stream) {.nimcall.} =
   {.cast(raises: []).}: {.cast(tags: []).}:

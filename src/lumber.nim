@@ -13,6 +13,9 @@ export types
 import ./lumber/version
 export version
 
+import ./lumber/timestamps
+export utcTimestamp, utcDate
+
 import ./lumber/streams as lumberstreams
 export SizeRotateStream, newRollingFileStream, TimeRotateStream, newDailyFileStream,
   BufferedStream, newBufferedStream, defaultBufferSize, defaultFlushIntervalMs,
@@ -219,42 +222,6 @@ var cachedSecond {.threadvar.}: int64
 # Fixed-size, heap-free cache: threadvars are not destroyed on thread
 # exit, so a string here would leak its payload once per thread
 var cachedTimestamp {.threadvar.}: array[len("yyyy-MM-ddTHH:mm:ss"), char]
-
-proc utcTimestamp*(unixSec: int64): string =
-  ## Renders a unix timestamp as "yyyy-MM-ddTHH:mm:ss" (UTC) using plain
-  ## integer math (Howard Hinnant's civil-from-days). Used for the log
-  ## timestamp instead of std/times DateTime formatting, which allocates
-  ## and caches a Timezone in a threadvar that thread exit never frees.
-  var days = unixSec div 86400
-  var rem = unixSec mod 86400
-  if rem < 0:
-    rem += 86400
-    days -= 1
-  let z = days + 719468
-  let era = (if z >= 0: z else: z - 146096) div 146097
-  let doe = z - era * 146097
-  let yoe = (doe - doe div 1460 + doe div 36524 - doe div 146096) div 365
-  let doy = doe - (365 * yoe + yoe div 4 - yoe div 100)
-  let mp = (5 * doy + 2) div 153
-  let d = doy - (153 * mp + 2) div 5 + 1
-  let m = mp + (if mp < 10: 3 else: -9)
-  let y = yoe + era * 400 + (if m <= 2: 1 else: 0)
-  result = newString(19)
-  template put2(idx: int, v: int64) =
-    result[idx] = chr(ord('0') + int(v div 10 mod 10))
-    result[idx + 1] = chr(ord('0') + int(v mod 10))
-  put2(0, y div 100)
-  put2(2, y)
-  result[4] = '-'
-  put2(5, m)
-  result[7] = '-'
-  put2(8, d)
-  result[10] = 'T'
-  put2(11, rem div 3600)
-  result[13] = ':'
-  put2(14, rem mod 3600 div 60)
-  result[16] = ':'
-  put2(17, rem mod 60)
 
 proc formatTimestamp(): string =
   let t = getTime()
