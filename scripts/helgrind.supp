@@ -1,0 +1,24 @@
+# Nim's Channel.close (std channels_builtin) destroys the channel's
+# internal mutex during deinitRawChannel, which helgrind reports as
+# destroying a locked mutex. lumber only closes the channel after the
+# writer thread is joined, so no thread of ours can hold it; this is
+# stdlib teardown behavior, not lumber's locking.
+#
+# Helgrind emits the event under two error kinds, so both are
+# suppressed. The leading "..." absorbs the tool's intercept frames,
+# which are unsymbolized ("???") on some valgrind builds (the GitHub
+# runners) and named mutex_destroy_WRK on others; matching on the Nim
+# frame keeps the suppression working on both while still only
+# matching channel teardown.
+{
+   nim-channel-close-mutex-destroy-misc
+   Helgrind:Misc
+   ...
+   fun:*deinitRawChannel*
+}
+{
+   nim-channel-close-mutex-destroy-api
+   Helgrind:PthAPIerror
+   ...
+   fun:*deinitRawChannel*
+}

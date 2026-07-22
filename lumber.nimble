@@ -31,6 +31,9 @@ task test, "Run the test suite (set LUMBER_TEST_MM to test another memory manage
 task testValgrind, "Run the test suite under valgrind, via Docker when valgrind is not installed (set LUMBER_TEST_MM as with test)":
   exec "nim e --hints:off scripts/tests.nims valgrind"
 
+task testHelgrind, "Run the threaded tests under helgrind, via Docker when valgrind is not installed (set LUMBER_TEST_MM as with test)":
+  exec "nim e --hints:off scripts/tests.nims helgrind"
+
 task setVersion, "Set the package version in lumber.nimble and src/lumber/version.nim (nimble setVersion X.Y.Z)":
   proc replaceLine(path, prefix, newLine: string) =
     var lines = readFile(path).splitLines

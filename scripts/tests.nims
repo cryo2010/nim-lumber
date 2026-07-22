@@ -9,6 +9,8 @@
 
 const allTests = ["test_logger", "test_middleware", "test_threading",
                   "test_streams", "test_cli"]
+const threadedTests = ["test_threading", "test_streams"]
+
 let mm = getEnv("LUMBER_TEST_MM", "orc")
 
 proc valgrindCompile(): string =
@@ -48,12 +50,26 @@ proc runValgrind() =
   exec compile & "-d:lumberLevel=ERROR tests/test_compile_gate.nim"
   exec vg & "tests/test_compile_gate"
 
+proc runHelgrind() =
+  ## Data-race detection. Only the multi-threaded binaries are worth the
+  ## tool's slowdown; the single-threaded tests cannot race.
+  if findExe("valgrind").len == 0:
+    dockerFallback("helgrind")
+    return
+  let compile = valgrindCompile()
+  const hg = "valgrind --tool=helgrind --quiet --error-exitcode=1 " &
+             "--suppressions=scripts/helgrind.supp "
+  for t in threadedTests:
+    exec compile & "tests/" & t & ".nim"
+    exec hg & "tests/" & t
+
 proc buildCli() =
   exec "nim c -d:release --threads:on --opt:speed --hints:off -o:lumber src/lumber/cli.nim"
 
 case paramStr(paramCount())
 of "test": runTests()
 of "valgrind": runValgrind()
+of "helgrind": runHelgrind()
 of "build": buildCli()
 else:
-  quit("usage: nim e scripts/tests.nims {test|valgrind|build}")
+  quit("usage: nim e scripts/tests.nims {test|valgrind|helgrind|build}")

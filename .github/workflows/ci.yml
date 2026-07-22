@@ -38,6 +38,11 @@ jobs:
         env:
           LUMBER_TEST_MM: ${{ matrix.mm }}
 
+      - name: Run threaded tests under helgrind (--mm:${{ matrix.mm }})
+        run: nim e scripts/tests.nims helgrind
+        env:
+          LUMBER_TEST_MM: ${{ matrix.mm }}
+
       - name: Build CLI
         if: matrix.mm == 'orc'
         run: nim e scripts/tests.nims build
