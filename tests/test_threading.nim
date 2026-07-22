@@ -1,5 +1,5 @@
 import unittest
-import std/[os, streams, json, strformat]
+import std/[os, streams, json, strformat, atomics, locks]
 import lumber
 
 # Hammers the logging hot path from many threads at once, then verifies the
@@ -11,6 +11,26 @@ const
   numThreads = 8
   messagesPerThread = 2_000
 
+var loggingDone: Atomic[int]
+var collectLock: Lock
+initLock(collectLock)
+
+proc collectAfterAllLoggers() =
+  ## ORC accumulates per-thread cycle-candidate state that thread exit
+  ## does not free, so workers collect before exiting to keep the
+  ## valgrind CI check leak-clean (no-op under arc/atomicArc). Two
+  ## synchronization points matter, because the ORC collector walks refs
+  ## without taking any lock: the barrier keeps a collector from racing
+  ## another worker's refcount updates while it still logs, and the lock
+  ## keeps two collectors from marking shared objects at the same time
+  ## (helgrind flags both). sleep rather than spin: valgrind serializes
+  ## threads, and a busy-wait starves the workers this one waits for.
+  discard loggingDone.fetchAdd(1)
+  while loggingDone.load < numThreads:
+    sleep(1)
+  withLock collectLock:
+    GC_fullCollect()
+
 let logFile = getTempDir() / "lumber_test_threading.log"
 
 proc worker(id: int) {.thread.} =
@@ -19,16 +39,14 @@ proc worker(id: int) {.thread.} =
     withLogContext(%* {"ctxThread": id}):
       for i in 0 ..< messagesPerThread:
         logger.info(&"message {i} from thread {id}", seqNo=i, thread=id)
-    # ORC accumulates per-thread cycle-candidate state that thread exit
-    # does not free; collect before exiting so the valgrind CI check
-    # stays leak-clean (no-op under arc/atomicArc)
-    GC_fullCollect()
+    collectAfterAllLoggers()
 
 test "concurrent logging: intact lines, per-thread order, context isolation":
   removeFile(logFile)
   configureLogging(cfg):
     cfg.outputs = @[LogOutput(stream: newFileStream(logFile, fmWrite))]
 
+  loggingDone.store(0)
   var threads: array[numThreads, Thread[int]]
   for i in 0 ..< numThreads:
     createThread(threads[i], worker, i)
@@ -60,6 +78,7 @@ test "flushLogs is safe while other threads log":
   configureLogging(cfg):
     cfg.outputs = @[LogOutput(stream: newFileStream(logFile, fmWrite))]
 
+  loggingDone.store(0)
   var threads: array[numThreads, Thread[int]]
   for i in 0 ..< numThreads:
     createThread(threads[i], worker, i)
@@ -88,13 +107,14 @@ proc sharedWorker(id: int) {.thread.} =
   {.cast(gcsafe).}:
     for i in 0 ..< messagesPerThread:
       sharedLogger.info(&"shared message {i}", seqNo=i, thread=id)
-    GC_fullCollect()  # see worker
+    collectAfterAllLoggers()
 
 test "one logger with extra fields shared across threads":
   removeFile(logFile)
   configureLogging(cfg):
     cfg.outputs = @[LogOutput(stream: newFileStream(logFile, fmWrite))]
 
+  loggingDone.store(0)
   var threads: array[numThreads, Thread[int]]
   for i in 0 ..< numThreads:
     createThread(threads[i], sharedWorker, i)
@@ -126,7 +146,7 @@ proc dailyWorker(id: int) {.thread.} =
     var logger = newLogger(name = "daily")
     for i in 0 ..< 100:
       logger.info(&"daily message {i}", thread=id)
-    GC_fullCollect()  # see worker
+    collectAfterAllLoggers()
 
 test "daily rotation output logged from threads":
   removeFile(dailyLog)
@@ -138,6 +158,7 @@ test "daily rotation output logged from threads":
     configureLogging(cfg):
       cfg.outputs = @[LogOutput(stream: newFileStream(stdout))]
 
+  loggingDone.store(0)
   var threads: array[numThreads, Thread[int]]
   for i in 0 ..< numThreads:
     createThread(threads[i], dailyWorker, i)
