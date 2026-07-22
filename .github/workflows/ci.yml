@@ -19,8 +19,14 @@ jobs:
         with:
           nim-version: 'stable'
 
+      # Steps call scripts/tests.nims via `nim e` rather than the nimble
+      # tasks: nimble 0.22 exits 0 when a task fails, so a nimble-invoked
+      # step can never turn red.
+      - name: Install dependencies
+        run: nimble install -y --depsOnly
+
       - name: Run tests (--mm:${{ matrix.mm }})
-        run: nimble test -y
+        run: nim e scripts/tests.nims test
         env:
           LUMBER_TEST_MM: ${{ matrix.mm }}
 
@@ -28,13 +34,18 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y valgrind
 
       - name: Run tests under valgrind (--mm:${{ matrix.mm }})
-        run: nimble testValgrind -y
+        run: nim e scripts/tests.nims valgrind
+        env:
+          LUMBER_TEST_MM: ${{ matrix.mm }}
+
+      - name: Run threaded tests under helgrind (--mm:${{ matrix.mm }})
+        run: nim e scripts/tests.nims helgrind
         env:
           LUMBER_TEST_MM: ${{ matrix.mm }}
 
       - name: Build CLI
         if: matrix.mm == 'orc'
-        run: nimble buildProd -y
+        run: nim e scripts/tests.nims build
 
   #test-devel:
   #  if: github.event_name == 'pull_request'
